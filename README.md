@@ -21,30 +21,83 @@ StabilEdge is a verification framework that extends the Marabou solver with a hi
 
 ## Installation
 
-1. **Obtain Marabou**
+## 1  Obtain Marabou
 
 ```bash
 git clone https://github.com/NeuralNetworkVerification/Marabou.git
-cd Marabou
-./scripts/install.sh   # Follow Marabou documentation for build options
+# Follow Marabou documentation for build options
 ```
 
-2. **Clone StabilEdge**
+## 2  Clone StabilEdge
 
 ```bash
 git clone https://github.com/your‑organisation/StabilEdge.git
 ```
 
-3. **Launch the GUI**
+## 3  Create & Activate the Conda Environment
+
+You’ll need a Conda environment called **`verify_gui`** with all required dependencies.
+
+```bash
+# Using the provided environment file
+conda env create -f environment.yml
+conda activate verify_gui
+```
+
+<details>
+<summary><strong>Manual install (alternative)</strong></summary>
+
+```bash
+conda create -n verify_gui python=3.8 pyqt matplotlib ...
+conda activate verify_gui
+```
+</details>
+
+## 4  Run the GUI
+
+### 4.1 Method A — Command‑Line
 
 ```bash
 cd StabilEdge
-./run_gui.sh           # Starts the graphical interface
+./run_gui.sh
 ```
 
-A pre‑compiled standalone executable is available for users who prefer not to build from source.
+The script automatically
+
+* activates the correct Conda environment  
+* sets the necessary Qt plugin paths  
+* forces software rendering to avoid OpenGL / ROS / CUDA conflicts  
+* launches **`StableEdge_GUI.py`**
 
 ---
+
+### 4.2 Method B — Double‑Click App Icon *(optional)*
+
+1. **Right‑click** `run_gui.sh` → **Properties** → **Permissions**  
+2. ✔️ Enable **“Allow executing file as program”**  
+3. Double‑click `run_gui.sh` and choose **Run**
+
+> 💡 Some desktop environments need a `.desktop` file for a true menu launcher (see below).
+
+## 5  [Optional] Create a Desktop App Launcher
+
+Create `StabilEdge.desktop`:
+
+```desktop
+[Desktop Entry]
+Name=StabilEdge
+Exec=/absolute/path/to/run_gui.sh
+Path=/absolute/path/to/StabilEdge
+Terminal=true
+Type=Application
+Icon=/absolute/path/to/icon.png
+```
+
+Move it to:
+
+```bash
+mv StabilEdge.desktop ~/.local/share/applications/
+```
 
 ## Usage Overview
 
@@ -66,17 +119,7 @@ A pre‑compiled standalone executable is available for users who prefer not to 
   - `perturbation`: domain constraints and pixel/feature selections
   - Additional optional fields (see examples).
 
----
 
-## Command‑Line Options
-
-```bash
-# Verify without the GUI
-python3 stabil_edge_cli.py --model network.onnx --json feature.json \
-                           --dataset inputs.csv --delta 0.03 --epsilon 0.05
-```
-
----
 
 ## Citation
 
@@ -84,7 +127,7 @@ If you use StabilEdge in academic work, please cite:
 
 ```bibtex
 @inproceedings{StabilEdge2025,
-  title     = {StabilEdge: Formal Verification of Deep Neural Networks},
+  title     = {StabilEdge:},
   author    = {Author Names},
   booktitle = {Proceedings of the XYZ Conference},
   year      = {2025}
