@@ -4,19 +4,18 @@ StabilEdge is a verification framework that extends the Marabou solver with a hi
 
 ---
 
+
 ## Features
 
-| Category | Description |
-| -------- | ----------- |
-|          |             |
+| Category                   | Description                                                                                                                                     |
+|---------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Verification Modes**    | Four distinct verification procedures (see accompanying paper) covering local and targeted robustness analyses.                                |
+| **GUI**                   | Cross‑platform graphical interface with integrated Netron viewer.                                                                              |
+| **Flexible Input**        | Accepts ONNX models, data sets, and a Feature JSON file specifying task type, domain constraints, and perturbation settings.                   |
+| **Interactive Configuration** | Users select pixel or time‑series features to perturb, set delta (δ) and epsilon (ε) thresholds, and choose single or multiple values.     |
+| **Progress Monitoring**   | Real‑time progress bar tracking remaining SAT/UNSAT instances; optional visualisation of results on completion.                                |
+| **Adaptive Timeout**      | Extended Marabou timeout that analyses solver statistics and recommends when to prolong or disable the limit.                                  |
 
-| **Verification Modes**        | Four distinct verification procedures (see accompanying paper) covering local and targeted robustness analyses.                        |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| **GUI**                       | Cross‑platform graphical interface with integrated Netron viewer.                                                                      |
-| **Flexible Input**            | Accepts ONNX models, data sets, and a Feature JSON file specifying task type, domain constraints, and perturbation settings.           |
-| **Interactive Configuration** | Users select pixel or time‑series features to perturb, set delta (δ) and epsilon (ε) thresholds, and choose single or multiple values. |
-| **Progress Monitoring**       | Real‑time progress bar tracking remaining SAT/UNSAT instances; optional visualisation of results on completion.                        |
-| **Adaptive Timeout**          | Extended Marabou timeout that analyses solver statistics and recommends when to prolong or disable the limit.                          |
 
 ---
 
