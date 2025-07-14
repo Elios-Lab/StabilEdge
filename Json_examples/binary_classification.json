@@ -1,0 +1,21 @@
+{
+  "name": "TOF",
+  "task": "classification",
+  "classes": 2,
+  "time_steps": [0],
+  "features": [
+    {
+      "name": "pixel",
+      "index": 0,
+      "properties": {
+        "indexes_to_analyze": null,
+        "starting_indexes": [],
+        "input_domain": {
+          "min": 0,
+          "max": 255
+        },
+        "delta_type": "absolute"
+      }
+    }
+  ]
+}

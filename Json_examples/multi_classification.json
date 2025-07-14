@@ -1,0 +1,21 @@
+{
+  "name": "ITD",
+  "task": "classification",
+  "classes": 4,
+  "time_steps": [0],
+  "features": [
+    {
+      "name": "pixel",
+      "index": 0,
+      "properties": {
+        "indexes_to_analyze": null,
+        "starting_indexes": [],
+        "input_domain": {
+          "min": 20,
+          "max": 38
+        },
+        "delta_type": "absolute"
+      }
+    }
+  ]
+}

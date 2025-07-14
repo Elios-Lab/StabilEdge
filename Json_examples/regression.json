@@ -1,0 +1,255 @@
+{
+    "name": "weather_forecasting",
+    "task": "regression",
+    "time_steps": [23],
+    "features": [
+      {
+        "name": "p (mbar)",
+        "index": 0,
+        "properties": {
+          "indexes_to_analyze": 0,
+          "starting_indexes": [0, 19, 38, 57, 76, 95, 114, 133, 152, 171, 190, 209, 228, 247, 266, 285, 304, 323, 342, 361, 380, 399, 418, 437],
+          "input_domain": {
+            "min": 996.52,
+            "max": 1015.35
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "T (degC)",
+        "index": 1,
+        "properties": {
+          "indexes_to_analyze": 1,
+          "starting_indexes": [1, 20, 39, 58, 77, 96, 115, 134, 153, 172, 191, 210, 229, 248, 267, 286, 305, 324, 343, 362, 381, 400, 419, 438],
+          "input_domain": {
+            "min": -23.0,
+            "max": 38.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "Tpot (K)",
+        "index": 2,
+        "properties": {
+          "indexes_to_analyze": 2,
+          "starting_indexes": [2, 21, 40, 59, 78, 97, 116, 135, 154, 173, 192, 211, 230, 249, 268, 287, 306, 325, 344, 363, 382, 401, 420, 439],
+          "input_domain": {
+            "min": 250.0,
+            "max": 350.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "Tdew (degC)",
+        "index": 3,
+        "properties": {
+          "indexes_to_analyze": 3,
+          "starting_indexes": [3, 22, 41, 60, 79, 98, 117, 136, 155, 174, 193, 212, 231, 250, 269, 288, 307, 326, 345, 364, 383, 402, 421, 440],
+          "input_domain": {
+            "min": -30.0,
+            "max": 25.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "rh (%)",
+        "index": 4,
+        "properties": {
+          "indexes_to_analyze": 4,
+          "starting_indexes": [4, 23, 42, 61, 80, 99, 118, 137, 156, 175, 194, 213, 232, 251, 270, 289, 308, 327, 346, 365, 384, 403, 422, 441],
+          "input_domain": {
+            "min": 0,
+            "max": 100
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "VPmax (mbar)",
+        "index": 5,
+        "properties": {
+          "indexes_to_analyze": 5,
+          "starting_indexes": [5, 24, 43, 62, 81, 100, 119, 138, 157, 176, 195, 214, 233, 252, 271, 290, 309, 328, 347, 366, 385, 404, 423, 442],
+          "input_domain": {
+            "min": 1.0,
+            "max": 10.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "VPact (mbar)",
+        "index": 6,
+        "properties": {
+          "indexes_to_analyze": 6,
+          "starting_indexes": [6, 25, 44, 63, 82, 101, 120, 139, 158, 177, 196, 215, 234, 253, 272, 291, 310, 329, 348, 367, 386, 405, 424, 443],
+          "input_domain": {
+            "min": 1.0,
+            "max": 10.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "VPdef (mbar)",
+        "index": 7,
+        "properties": {
+          "indexes_to_analyze": 7,
+          "starting_indexes": [7, 26, 45, 64, 83, 102, 121, 140, 159, 178, 197, 216, 235, 254, 273, 292, 311, 330, 349, 368, 387, 406, 425, 444],
+          "input_domain": {
+            "min": 0.0,
+            "max": 5.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "sh (g/kg)",
+        "index": 8,
+        "properties": {
+          "indexes_to_analyze": 8,
+          "starting_indexes": [8, 27, 46, 65, 84, 103, 122, 141, 160, 179, 198, 217, 236, 255, 274, 293, 312, 331, 350, 369, 388, 407, 426, 445],
+          "input_domain": {
+            "min": 0.0,
+            "max": 20.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "H2OC (mmol/mol)",
+        "index": 9,
+        "properties": {
+          "indexes_to_analyze": 9,
+          "starting_indexes": [9, 28, 47, 66, 85, 104, 123, 142, 161, 180, 199, 218, 237, 256, 275, 294, 313, 332, 351, 370, 389, 408, 427, 446],
+          "input_domain": {
+            "min": 0.0,
+            "max": 30.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "rho (g/m**3)",
+        "index": 10,
+        "properties": {
+          "indexes_to_analyze": 10,
+          "starting_indexes": [10, 29, 48, 67, 86, 105, 124, 143, 162, 181, 200, 219, 238, 257, 276, 295, 314, 333, 352, 371, 390, 409, 428, 447],
+          "input_domain": {
+            "min": 1.1,
+            "max": 1.3
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "Wx",
+        "index": 11,
+        "properties": {
+          "indexes_to_analyze": 11,
+          "starting_indexes": [11, 30, 49, 68, 87, 106, 125, 144, 163, 182, 201, 220, 239, 258, 277, 296, 315, 334, 353, 372, 391, 410, 429, 448],
+          "input_domain": {
+            "min": -10.0,
+            "max": 10.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "Wy",
+        "index": 12,
+        "properties": {
+          "indexes_to_analyze": 12,
+          "starting_indexes": [12, 31, 50, 69, 88, 107, 126, 145, 164, 183, 202, 221, 240, 259, 278, 297, 316, 335, 354, 373, 392, 411, 430, 449],
+          "input_domain": {
+            "min": -10.0,
+            "max": 10.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "max Wx",
+        "index": 13,
+        "properties": {
+          "indexes_to_analyze": 13,
+          "starting_indexes": [13, 32, 51, 70, 89, 108, 127, 146, 165, 184, 203, 222, 241, 260, 279, 298, 317, 336, 355, 374, 393, 412, 431, 450],
+          "input_domain": {
+            "min": 0.0,
+            "max": 10.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "max Wy",
+        "index": 14,
+        "properties": {
+          "indexes_to_analyze": 14,
+          "starting_indexes": [14, 33, 52, 71, 90, 109, 128, 147, 166, 185, 204, 223, 242, 261, 280, 299, 318, 337, 356, 375, 394, 413, 432, 451],
+          "input_domain": {
+            "min": 0.0,
+            "max": 10.0
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "Day sin",
+        "index": 15,
+        "properties": {
+          "indexes_to_analyze": 15,
+          "starting_indexes": [15, 34, 53, 72, 91, 110, 129, 148, 167, 186, 205, 224, 243, 262, 281, 300, 319, 338, 357, 376, 395, 414, 433, 452],
+          "input_domain": {
+            "min": -1,
+            "max": 1
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "Day cos",
+        "index": 16,
+        "properties": {
+          "indexes_to_analyze": 16,
+          "starting_indexes": [16, 35, 54, 73, 92, 111, 130, 149, 168, 187, 206, 225, 244, 263, 282, 301, 320, 339, 358, 377, 396, 415, 434, 453],
+          "input_domain": {
+            "min": -1,
+            "max": 1
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "Year sin",
+        "index": 17,
+        "properties": {
+          "indexes_to_analyze": 17,
+          "starting_indexes": [17, 36, 55, 74, 93, 112, 131, 150, 169, 188, 207, 226, 245, 264, 283, 302, 321, 340, 359, 378, 397, 416, 435, 454],
+          "input_domain": {
+            "min": -1,
+            "max": 1
+          },
+          "delta_type": "absolute"
+        }
+      },
+      {
+        "name": "Year cos",
+        "index": 18,
+        "properties": {
+          "indexes_to_analyze": 18,
+          "starting_indexes": [18, 37, 56, 75, 94, 113, 132, 151, 170, 189, 208, 227, 246, 265, 284, 303, 322, 341, 360, 379, 398, 417, 436, 455],
+          "input_domain": {
+            "min": -1,
+            "max": 1
+          },
+          "delta_type": "absolute"
+        }
+      }
+    ]
+  }
+   
