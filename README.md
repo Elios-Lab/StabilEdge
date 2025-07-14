@@ -85,12 +85,15 @@ Create `StabilEdge.desktop`:
 
 ```desktop
 [Desktop Entry]
-Name=StabilEdge
-Exec=/absolute/path/to/run_gui.sh
-Path=/absolute/path/to/StabilEdge
-Terminal=true
 Type=Application
-Icon=/absolute/path/to/icon.png
+Version=1.0
+Name=StableEdge
+Comment=Formal verification GUI for ONNX models
+Exec=sh -c "cd /path/to/StableEdge && ./run_gui.sh"
+Icon=/path/to/StableEdge/icon.png
+Terminal=false
+Categories=Development;Science;
+StartupWMClass=StableNN_GUI.py
 ```
 
 Move it to:
