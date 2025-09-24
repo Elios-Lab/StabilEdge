@@ -67,7 +67,7 @@ The script automatically
 * activates the correct Conda environment  
 * sets the necessary Qt plugin paths  
 * forces software rendering to avoid OpenGL / ROS / CUDA conflicts  
-* launches **`StableEdge_GUI.py`**
+* launches **`StabilEdge_GUI.py`**
 
 ---
 
@@ -87,13 +87,13 @@ Create `StabilEdge.desktop`:
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=StableEdge
+Name=StabilEdge
 Comment=Formal verification GUI for ONNX models
-Exec=sh -c "cd /path/to/StableEdge && ./run_gui.sh"
-Icon=/path/to/StableEdge/icon.png
+Exec=sh -c "cd /path/to/StabilEdge && ./run_gui.sh"
+Icon=/path/to/StabilEdge/icon.png
 Terminal=false
 Categories=Development;Science;
-StartupWMClass=StableNN_GUI.py
+StartupWMClass=StabilEdge_GUI.py
 ```
 
 Move it to:

@@ -40,13 +40,40 @@ def load_random_image(directory: str) -> Tuple[np.ndarray, str]:
 
 
 def compute_meaningful_mask(image: np.ndarray) -> np.ndarray:
-    gray = image.mean(axis=2) if image.ndim == 3 else image
+    """
+    Computes a mask of "meaningful" pixels using the gradient magnitude of the image.
+    The gradients are computed on the normalized image and then scaled to 0-255 for Otsu's thresholding.
+    """
+    # Convert to grayscale if image is color.
+    if image.ndim == 3:
+        gray = np.mean(image, axis=2)
+    else:
+        gray = image
+
+    # Ensure we have at least a 2D array for gradient computation
+    if gray.ndim == 1:
+        # For 1D arrays, create a simple meaningful mask (all True or based on variance)
+        # or reshape to 2D if we know the original image dimensions
+        side = int(np.sqrt(gray.size))
+        if side * side == gray.size:
+            gray = gray.reshape(side, side)
+        else:
+            # If we can't make it square, return all pixels as meaningful
+            return np.ones(gray.shape, dtype=bool)
+
+    # Compute gradients - now guaranteed to be 2D
     gx, gy = np.gradient(gray)
-    mag = np.sqrt(gx**2 + gy**2)
-    norm = (mag - mag.min()) / (mag.max() - mag.min() + 1e-6)
-    scaled = (255 * norm).astype(np.uint8)
-    _, mask = cv2.threshold(scaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    return mask > 0
+    grad_mag = np.sqrt(gx**2 + gy**2)
+    
+    # Normalize gradient magnitude to 0-255.
+    grad_norm = (grad_mag - grad_mag.min()) / (grad_mag.max() - grad_mag.min() + 1e-6)
+    grad_scaled = np.uint8(255 * grad_norm)
+    grad_scaled = np.ascontiguousarray(grad_scaled)
+    
+    # Otsu's thresholding.
+    ret, mask = cv2.threshold(grad_scaled, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    meaningful_mask = mask > 0
+    return meaningful_mask
 
 
 def set_pixel_bounds_adaptive(
@@ -55,7 +82,8 @@ def set_pixel_bounds_adaptive(
     image: np.ndarray,
     delta: float,
     perturb_all: bool = False,
-    selected_idxs: Optional[List[int]] = None
+    selected_idxs: Optional[List[int]] = None,
+    original_image_shape: Optional[Tuple] = None
 ) -> None:
     """
     If perturb_all is False, only perturbs pixels in selected_idxs or "meaningful" mask.
@@ -69,11 +97,19 @@ def set_pixel_bounds_adaptive(
         flat_mask[selected_idxs] = True
         mask = flat_mask.reshape(image.shape)
     elif not perturb_all:
-        # compute 2D meaningful mask
-        mask = compute_meaningful_mask(image)  # shape (H,W) for color or gray
-        # if image has channels, replicate mask for each channel
-        if image.ndim == 3 and mask.ndim == 2:
-            mask = np.repeat(mask[:, :, None], image.shape[2], axis=2)
+        # If we have the original image shape, use it for meaningful mask computation
+        if original_image_shape is not None and len(original_image_shape) >= 2:
+            # Reshape the flattened image back to 2D for gradient computation
+            if len(original_image_shape) == 2:
+                temp_image = image.reshape(original_image_shape)
+            else:  # 3D (H, W, C)
+                temp_image = image.reshape(original_image_shape)
+            mask_2d = compute_meaningful_mask(temp_image)
+            # Flatten the mask to match the current image shape
+            mask = mask_2d.flatten().reshape(image.shape)
+        else:
+            # Fallback: try to compute meaningful mask directly
+            mask = compute_meaningful_mask(image)  # This might fail for 1D arrays
     else:
         mask = None
 
@@ -131,12 +167,37 @@ def local_rob_sens(
     # This print will now actually show you both values:
     print(f"Delta before normalization: {delta}, Delta normalized: {normalized_delta:.6f}")
 
-
     net0 = Marabou.read_onnx(onnx_path)
     inp0 = net0.inputVars[0][0]
     out0 = net0.outputVars[0][0]
 
-    orig_out = net0.evaluateWithoutMarabou([image])[0]
+    # FIX: Handle shape mismatch between image and model input
+    expected_shape = inp0.shape
+    image_flat = image.flatten()
+    
+    print(f"Image shape: {image.shape}, flattened size: {image_flat.size}")
+    print(f"Model expects: {expected_shape}")
+    
+    # Check if we need to reshape or truncate/pad the input
+    expected_size = np.prod(expected_shape)
+    
+    if image_flat.size != expected_size:
+        if image_flat.size > expected_size:
+            # Truncate if image is larger
+            print(f"Truncating input from {image_flat.size} to {expected_size} elements")
+            model_input = image_flat[:expected_size]
+        else:
+            # Pad with zeros if image is smaller
+            print(f"Padding input from {image_flat.size} to {expected_size} elements")
+            model_input = np.zeros(expected_size, dtype=np.float32)
+            model_input[:image_flat.size] = image_flat
+    else:
+        model_input = image_flat
+    
+    # Reshape to match expected input shape
+    model_input = model_input.reshape(expected_shape)
+    
+    orig_out = net0.evaluateWithoutMarabou([model_input])[0]
     orig_pred = int(np.argmax(orig_out))
     print(f"Original predicted class: {orig_pred}")
 
@@ -154,8 +215,25 @@ def local_rob_sens(
         inp = net.inputVars[0][0]
         out = net.outputVars[0][0]
 
-        # only perturb pixels in meaningful regions
-        set_pixel_bounds_adaptive(net, inp, image, delta, perturb_all=False)
+        # Use the properly shaped input for bounds setting
+        # For meaningful mask computation, we need to handle the size mismatch
+        if image_flat.size != expected_size:
+            # If sizes don't match, we can't meaningfully compute a mask
+            # So we'll perturb all pixels in the truncated/padded input
+            set_pixel_bounds_adaptive(
+                net, inp, model_input, delta, 
+                perturb_all=True,  # Force perturb all since we can't compute meaningful mask
+                selected_idxs=None,
+                original_image_shape=None
+            )
+        else:
+            # Sizes match, we can use the original image shape for meaningful mask
+            set_pixel_bounds_adaptive(
+                net, inp, model_input, delta, 
+                perturb_all=False, 
+                selected_idxs=None,
+                original_image_shape=image.shape
+            )
 
         # enforce that the logit for class `alt` ≥ logit(j) + ε for all j≠alt
         for j in range(num_classes):
@@ -221,7 +299,7 @@ def targeted_rob_sens(
     stop_requested: Callable[[], bool] = lambda: False
 ) -> Tuple[Dict, str]:
     
-        # 1. Normalize (and print)
+    # 1. Normalize (and print)
     normalized_delta = normalize_difference(delta, tmin=tmin, tmax=tmax)
     print(f"Delta before normalization: {delta}, Delta normalized: {normalized_delta:.4f}")
 
@@ -229,7 +307,40 @@ def targeted_rob_sens(
     base_inp = base_net.inputVars[0][0]
     base_out = base_net.outputVars[0][0]
 
-    orig_out = base_net.evaluateWithoutMarabou([image])[0]
+    # FIX: Handle shape mismatch between image and model input
+    expected_shape = base_inp.shape
+    image_flat = image.flatten()
+    
+    print(f"Image shape: {image.shape}, flattened size: {image_flat.size}")
+    print(f"Model expects: {expected_shape}")
+    
+    # Check if we need to reshape or truncate/pad the input
+    expected_size = np.prod(expected_shape)
+    
+    # set adaptive bounds (either full‐image or selected pixels)
+    # Handle size mismatch for meaningful mask computation
+    if image_flat.size != expected_size:
+        # If sizes don't match, we can't meaningfully compute a mask from original image
+        # So we'll use the perturb_all_pixels flag and selected_idxs as specified
+        set_pixel_bounds_adaptive(
+            net, inp, model_input, delta,
+            perturb_all=perturb_all_pixels,
+            selected_idxs=selected_idxs if perturb_all_pixels else None,
+            original_image_shape=None
+        )
+    else:
+        # Sizes match, we can use the original image shape for meaningful mask
+        set_pixel_bounds_adaptive(
+            net, inp, model_input, delta,
+            perturb_all=perturb_all_pixels,
+            selected_idxs=selected_idxs,
+            original_image_shape=image.shape
+        )
+    
+    # Reshape to match expected input shape
+    model_input = model_input.reshape(expected_shape)
+
+    orig_out = base_net.evaluateWithoutMarabou([model_input])[0]
     orig_pred = int(np.argmax(orig_out))
     print(f"Original pred: {orig_pred}")
 
@@ -246,9 +357,10 @@ def targeted_rob_sens(
 
         # set adaptive bounds (either full‐image or selected pixels)
         set_pixel_bounds_adaptive(
-            net, inp, image, delta,
+            net, inp, model_input, delta,
             perturb_all=perturb_all_pixels,
-            selected_idxs=selected_idxs
+            selected_idxs=selected_idxs,
+            original_image_shape=image.shape
         )
 
         # require logit(alt) ≥ logit(j) + ε for all j ≠ alt

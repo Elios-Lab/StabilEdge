@@ -28,6 +28,51 @@ def normalize_delta(raw: float, factor: float, delta_type: str) -> float:
         return raw
     return raw / factor
 
+def compute_otsu_threshold(image_flat):
+    """
+    Computes an Otsu threshold on a flattened image array in [0,1],
+    used to create a mask of 'meaningful' pixels.
+    """
+    hist, bin_edges = np.histogram(image_flat, bins=256, range=(0, 1))
+    total = image_flat.size
+    sum_total = np.dot(hist, bin_edges[:-1])
+    sumB = 0.0
+    wB = 0.0
+    maximum = 0.0
+    threshold = 0.0
+
+    for i in range(256):
+        wB += hist[i]
+        if wB == 0:
+            continue
+        wF = total - wB
+        if wF == 0:
+            break
+        sumB += bin_edges[i] * hist[i]
+        mB = sumB / wB
+        mF = (sum_total - sumB) / wF
+        varBetween = wB * wF * (mB - mF) ** 2
+        if varBetween > maximum:
+            maximum = varBetween
+            threshold = bin_edges[i]
+    return threshold
+
+
+def compute_meaningful_mask(image: np.ndarray) -> np.ndarray:
+    """
+    Compute a binary mask of meaningful pixels using Otsu threshold.
+    
+    Args:
+        image: 2D numpy array in [0,1] range
+        
+    Returns:
+        Boolean mask where True indicates meaningful pixels
+    """
+    image_flat = image.flatten()
+    threshold = compute_otsu_threshold(image_flat)
+    mask = image > threshold
+    return mask
+
 
 # ── make CSVImageFolder accept a `transform` ───────────────────────────────────
 class CSVImageFolder(Dataset):
