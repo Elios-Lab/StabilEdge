@@ -213,11 +213,10 @@ def verify_single_image(
     delta: float,
     features: List[Feature],
     feature_norm: float,
-    model_path: str,
+    net: Marabou.Network,
     verbosity: int,
     marabou_opts: Dict[str, Any]
-) -> str:
-    net = Marabou.read_onnx(model_path)
+) -> Tuple[str, Any]:
     inp_var = net.inputVars[0][0]
     out_var = net.outputVars[0][0]
 
@@ -235,19 +234,20 @@ def verify_single_image(
         feat.apply_bounds(net, inp_var, image, feat_norm, mask)
 
     coeff = 1.0 if pred == 1 else -1.0
-    net.addInequality([out_var[0]], [coeff], 0.0)
+    net.addInequality([out_var[0]], [coeff], 0.0, isProperty=True)
 
     opts = Marabou.createOptions(**marabou_opts)
     exitCode, vals, stats = net.solve(options=opts)
 
-
+    # Clear property constraints before returning for network reuse
+    net.clearProperty()
 
     if exitCode == "sat":
-        return "sat"
+        return "sat", stats
     elif exitCode == "unsat":
-        return "unsat"
+        return "unsat", stats
     else:
-        return "TIMEOUT"
+        return "TIMEOUT", stats
 
 
 def sample_perturbed_image(image: np.ndarray, delta: float) -> np.ndarray:
@@ -287,7 +287,7 @@ def run_tof(
     verbosity: int = 0,
     marabou_opts: Optional[Dict[str, Any]] = None,
     stop_requested: Optional[Callable[[], bool]] = None
-) -> Tuple[int, int, int]:
+) -> Tuple[int, int, int, List[Any]]:
     # load config
     cfg = load_config(json_cfg)
     if marabou_opts is None:
@@ -326,19 +326,25 @@ def run_tof(
             transform=normalize_tensor
         )
 
+    # Load the ONNX model ONCE before the loop for reuse
+    print("Loading ONNX model...")
+    net = Marabou.read_onnx(model_path)
+    print("Model loaded successfully.")
+
     sat_cnt = unsat_cnt = timeout_cnt = 0
+    all_stats = []  # Collect all stats objects
     total = len(dataset)
     for idx, (img, lb, fn) in enumerate(dataset, start=1):
         if stop_requested and stop_requested():
             break
         print(f"Verifying {fn}...")
-        res = verify_single_image(
+        res, stats = verify_single_image(
             image=img,
             correct_class=lb,
             delta=delta,
             features=features,
             feature_norm=norm,
-            model_path=model_path,
+            net=net,
             verbosity=verbosity,
             marabou_opts=marabou_opts
         )
@@ -348,6 +354,8 @@ def run_tof(
             unsat_cnt += 1
         else:
             timeout_cnt += 1
+        
+        all_stats.append(stats)  # Store stats object
 
         if progress_callback is not None:
             progress_callback(idx, total, sat_cnt, unsat_cnt, timeout_cnt)
@@ -365,7 +373,7 @@ def run_tof(
         plt.close(fig)
         print(f"__PLOT__:{out_png}")
 
-    return sat_cnt, unsat_cnt, timeout_cnt
+    return sat_cnt, unsat_cnt, timeout_cnt, all_stats
 
 
 if __name__ == "__main__":

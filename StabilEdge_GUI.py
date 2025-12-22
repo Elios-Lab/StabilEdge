@@ -41,14 +41,14 @@ from PIL import Image
 from typing import Optional, List, Tuple, Set, Deque, Dict, Any, Callable
 
 from PyQt5.QtCore   import pyqtSignal, QThread, QUrl, QProcess, pyqtSlot
-from PyQt5.QtGui    import QIcon, QFont
+from PyQt5.QtGui    import QIcon, QFont, QColor, QLinearGradient
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLineEdit, QPushButton, QLabel, QComboBox,
     QCheckBox, QTreeWidget, QTreeWidgetItem,
     QMessageBox, QFileDialog, QPlainTextEdit, QSplitter,
     QSpinBox, QDoubleSpinBox, QTabWidget, QGridLayout, QMenu, QAction, QToolButton, QWidgetAction,
-    QSizePolicy, QProgressBar
+    QSizePolicy, QProgressBar, QGraphicsDropShadowEffect
 )
 from PyQt5.QtWebEngineWidgets import QWebEngineView
 from PyQt5.QtCore import QTimer
@@ -86,7 +86,7 @@ os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
 import netron
 from ITD import local_rob_sens, targeted_rob_sens,plot_aggregated_itd, plot_grouped_confusion
 from TOF import run_tof
-from Jena_gui import run_jena
+from Jena import run_jena
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -96,30 +96,75 @@ CONFIG_MAP = {
     "Jena": os.path.join(BASE_DIR, "Jena_features.json"),
 }
 
-3
 
-# ── Enhanced Regex patterns for ALL Marabou statistics ──────────────────────
+def _get_input_indices(feature_props):
+    """Get input indices from feature properties, supporting both old and new naming."""
+    # Try new naming first, fall back to old naming for backward compatibility
+    return feature_props.get("input_indices") or feature_props.get("starting_indexes", [])
 
-RX_ACTIVE_PL         = re.compile(r"Number of active piecewise-linear constraints:\s+(\d+)\s*/\s*(\d+)")
-RX_SMT_DEPTH         = re.compile(r"Total depth is\s+(\d+)")
-RX_NUM_SPLITS        = re.compile(r"Number of splits:\s+(\d+)")
-RX_TOTAL_TIME        = re.compile(r"Total time elapsed:\s+(\d+)\s+milli")
-RX_MAIN_LOOP_TIME    = re.compile(r"Main loop:\s+(\d+)\s+milli")
-RX_MAIN_LOOP_ITERATIONS = re.compile(r"Number of main loop iterations:\s+(\d+)")
-RX_SIMPLEX_PIVOTS    = re.compile(r"Total number of pivots performed:\s+(\d+)")
-RX_DEGENERATE_PIVOTS = re.compile(r"Degenerate:\s+(\d+)")
-RX_AVG_PIVOT_TIME    = re.compile(r"Average time per pivot:\s+([0-9.]+)\s+milli")
-RX_LAST_DEGRADATION  = re.compile(r"Last reported degradation:\s+([0-9.eE+-]+)")
-RX_TIGHTENED_BOUNDS  = re.compile(r"Number of tightened bounds:\s+(\d+)")
-RX_BASIS_REFACTOR    = re.compile(r"Number of basis refactorizations:\s+(\d+)")
-RX_PRECISION_RESTORATION = re.compile(r"Performing precision restoration")
 
-# ancillary patterns
-RX_TIMESTAMP      = re.compile(r"(\d{2}:\d{2}:\d{2})\s+Statistics update:")
-RX_INITIAL_STATS  = re.compile(r"Engine::solve: Initial statistics")
-RX_BLOCK_START    = re.compile(r"Statistics update:|Engine::solve: Initial statistics")
-RX_BLOCK_END      = re.compile(r"^---|^Performing precision restoration|^$")
 
+# ══════════════════════════════════════════════════════════════════
+# LEGACY REGEX PATTERNS (Optional - Only Used with verbosity >= 1)
+# ══════════════════════════════════════════════════════════════════
+# These patterns are DEPRECATED in favor of Python API (verbosity=0).
+# They're kept for backward compatibility when users want detailed 
+# text logs (verbosity=2). Safe to remove if API-only mode is enforced.
+
+# Version detection (if available in output)
+RX_MARABOU_VERSION = re.compile(r"Marabou\s+(?:version|v)?:?\s*([\d.]+)", re.IGNORECASE)
+
+# Core statistics patterns - flexible whitespace and optional punctuation
+RX_ACTIVE_PL         = re.compile(r"(?:Number\s+of\s+)?active\s+piecewise[\s-]?linear\s+constraints?:?\s*(\d+)\s*/\s*(\d+)", re.IGNORECASE)
+RX_SMT_DEPTH         = re.compile(r"(?:Current\s+|Total\s+)?depth(?:\s+is)?:?\s+(\d+)", re.IGNORECASE)
+RX_NUM_SPLITS        = re.compile(r"(?:Number\s+of\s+)?splits?:?\s+(\d+)", re.IGNORECASE)
+RX_TOTAL_TIME        = re.compile(r"Total\s+(?:time\s+)?elapsed:?\s+(\d+)\s+(?:milli(?:seconds?)?|ms)", re.IGNORECASE)
+RX_MAIN_LOOP_TIME    = re.compile(r"Main\s+loop:?\s+(\d+)\s+(?:milli(?:seconds?)?|ms)", re.IGNORECASE)
+RX_MAIN_LOOP_ITERATIONS = re.compile(r"(?:Number\s+of\s+)?main\s+loop\s+iterations?:?\s+(\d+)", re.IGNORECASE)
+RX_SIMPLEX_PIVOTS    = re.compile(r"(?:Total\s+)?(?:number\s+of\s+)?pivots?(?:\s+performed)?:?\s+(\d+)", re.IGNORECASE)
+RX_DEGENERATE_PIVOTS = re.compile(r"Degenerate:?\s+(\d+)", re.IGNORECASE)
+RX_AVG_PIVOT_TIME    = re.compile(r"Average\s+(?:time\s+)?per\s+pivot:?\s+([0-9.]+)\s+(?:milli(?:seconds?)?|ms)", re.IGNORECASE)
+RX_LAST_DEGRADATION  = re.compile(r"(?:Last\s+reported\s+)?degradation:?\s+([0-9.eE+-]+)", re.IGNORECASE)
+RX_TIGHTENED_BOUNDS  = re.compile(r"(?:Number\s+of\s+)?tightened\s+bounds?:?\s+(\d+)", re.IGNORECASE)
+RX_BASIS_REFACTOR    = re.compile(r"(?:Number\s+of\s+)?basis\s+refactorizations?:?\s+(\d+)", re.IGNORECASE)
+RX_PRECISION_RESTORATION = re.compile(r"Performing\s+precision\s+restoration", re.IGNORECASE)
+
+# ancillary patterns - also made more flexible
+RX_TIMESTAMP      = re.compile(r"(\d{2}:\d{2}:\d{2})\s+Statistics\s+update:?", re.IGNORECASE)
+RX_INITIAL_STATS  = re.compile(r"Engine::solve:?\s+Initial\s+statistics", re.IGNORECASE)
+RX_BLOCK_START    = re.compile(r"Statistics\s+update:?|Engine::solve:?\s+Initial\s+statistics", re.IGNORECASE)
+RX_BLOCK_END      = re.compile(r"^---|^Performing\s+precision\s+restoration|^$")
+
+
+# ── Safe parsing helper with validation ──────────────────────────────────────
+def safe_parse_stat(pattern, line, default=None, parse_type=int, group_idx=1):
+    """
+    Safely parse a statistic from a line using regex pattern.
+    
+    Args:
+        pattern: Compiled regex pattern
+        line: Text line to parse
+        default: Default value if parsing fails
+        parse_type: Type to convert to (int, float, str)
+        group_idx: Which regex group to extract (default 1)
+    
+    Returns:
+        Parsed value or default
+    """
+    try:
+        match = pattern.search(line)
+        if match:
+            value = match.group(group_idx)
+            if parse_type == int:
+                return int(value)
+            elif parse_type == float:
+                return float(value)
+            else:
+                return value
+    except (ValueError, IndexError, AttributeError) as e:
+        # Log parsing failure for debugging (only in verbose mode)
+        pass
+    return default
 
 # ── Comprehensive Statistics Container with ALL metrics ──────────────────────
 ComprehensiveStats =  collections.namedtuple("KeyStats", [
@@ -212,70 +257,101 @@ def estimate_remaining_time(history: List[ComprehensiveStats]) -> Optional[float
 class FDRedirector:
     def __init__(self, sig):
         self.sig = sig
-        self.old_stdout = None
-        self.old_stderr = None
+        self.stopped = False
+        self.thread = None
+        self.pipe_r = None
+        self.pipe_w = None
+        self.old_stdout_fd = None
+        self.old_stderr_fd = None
 
     def start(self):
-        # Store original stdout/stderr
-        self.old_stdout = sys.stdout
-        self.old_stderr = sys.stderr
+        import threading
         
-        class TeeWriter:
-            def __init__(self, signal, original_stream):
-                self.signal = signal
-                self.original_stream = original_stream
-                self.buffer = ""
+        # Create a pipe for capturing output
+        self.pipe_r, self.pipe_w = os.pipe()
+        
+        # Duplicate the original stdout/stderr file descriptors
+        self.old_stdout_fd = os.dup(1)  # stdout
+        self.old_stderr_fd = os.dup(2)  # stderr
+        
+        # Redirect stdout and stderr to the pipe
+        os.dup2(self.pipe_w, 1)  # Redirect FD 1 (stdout) to pipe
+        os.dup2(self.pipe_w, 2)  # Redirect FD 2 (stderr) to pipe
+        
+        # Also update Python's sys.stdout/stderr
+        sys.stdout = os.fdopen(os.dup(self.pipe_w), 'w', buffering=1)
+        sys.stderr = os.fdopen(os.dup(self.pipe_w), 'w', buffering=1)
+
+        def read_loop():
+            """Read from pipe and emit to GUI in batches"""
+            buffer = []
+            last_emit = time.time()
+            
+            with os.fdopen(self.pipe_r, 'r', buffering=1) as reader:
+                while not self.stopped:
+                    try:
+                        line = reader.readline()
+                        if not line:
+                            break
+                        
+                        # Write to original stdout so it shows in terminal
+                        os.write(self.old_stdout_fd, line.encode())
+                        
+                        # Buffer for GUI
+                        buffer.append(line.rstrip())
+                        
+                        # Emit batched updates
+                        now = time.time()
+                        if (now - last_emit) >= 0.05 or len(buffer) >= 50:
+                            if buffer:
+                                for msg in buffer:
+                                    if msg.strip():
+                                        self.sig.emit(msg)
+                                buffer.clear()
+                                last_emit = now
+                    except Exception as e:
+                        break
                 
-            def write(self, text):
-                if text:  # Only process non-empty text
-                    # Always write to original stream first
-                    self.original_stream.write(text)
-                    self.original_stream.flush()
-                    
-                    # Add text to buffer
-                    self.buffer += text
-                    
-                    # Process complete lines
-                    lines = self.buffer.split('\n')
-                    # Keep last incomplete line in buffer
-                    self.buffer = lines[-1]
-                    
-                    # Emit all complete lines (except the last incomplete one)
-                    for line in lines[:-1]:
-                        if line.strip():  # Only emit non-empty lines
-                            self.signal.emit(line)
-                    
-                    # Also emit partial lines that end with carriage return (for progress updates)
-                    if '\r' in self.buffer:
-                        parts = self.buffer.split('\r')
-                        for part in parts[:-1]:
-                            if part.strip():
-                                self.signal.emit(part)
-                        self.buffer = parts[-1]
-                    
-            def flush(self):
-                self.original_stream.flush()
-                # Emit any remaining buffer content
-                if self.buffer.strip():
-                    self.signal.emit(self.buffer)
-                    self.buffer = ""
-        
-        # Replace stdout/stderr with TeeWriter that writes to both destinations
-        sys.stdout = TeeWriter(self.sig, self.old_stdout)
-        sys.stderr = TeeWriter(self.sig, self.old_stderr)
+                # Emit remaining buffer
+                for msg in buffer:
+                    if msg.strip():
+                        self.sig.emit(msg)
+
+        self.thread = threading.Thread(target=read_loop, daemon=True)
+        self.thread.start()
 
     def stop(self):
-        # Flush any remaining buffer before restoring
-        if hasattr(sys.stdout, 'flush'):
+        self.stopped = True
+        
+        # Flush Python streams
+        try:
             sys.stdout.flush()
-        if hasattr(sys.stderr, 'flush'):
             sys.stderr.flush()
-            
-        # Restore original stdout/stderr
-        if self.old_stdout:
-            sys.stdout = self.old_stdout
-        if self.old_stderr:
-            sys.stderr = self.old_stderr
+        except:
+            pass
+        
+        # Restore original file descriptors
+        if self.old_stdout_fd is not None:
+            os.dup2(self.old_stdout_fd, 1)
+            os.close(self.old_stdout_fd)
+        if self.old_stderr_fd is not None:
+            os.dup2(self.old_stderr_fd, 2)
+            os.close(self.old_stderr_fd)
+        
+        # Close the pipe write end
+        if self.pipe_w is not None:
+            try:
+                os.close(self.pipe_w)
+            except:
+                pass
+        
+        # Restore Python's stdout/stderr to originals
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        
+        # Wait for thread to finish
+        if self.thread and self.thread.is_alive():
+            self.thread.join(timeout=1.0)
 
 
 
@@ -339,6 +415,11 @@ class MultiWorker(QThread):
         # Add response handling for timeout dialog
         self._timeout_dialog_response = None
         self._timeout_dialog_event = None
+        
+        # Track Marabou version for compatibility warnings
+        self._marabou_version = None
+        self._parsing_failures = 0  # Count failed parses to detect format changes
+        self._warned_format_change = False
 
         # FIX: Remove the duplicate _progress_cb definition and make one clean version
         self._progress_cb = self._emit_progress_signal
@@ -369,7 +450,18 @@ class MultiWorker(QThread):
             self.log.emit(line)
 
     def _collect_and_maybe_warn(self, line: str, delta: float):
-        """Comprehensive statistics collection with ALL Marabou metrics"""
+        """
+        DEPRECATED: Legacy regex-based statistics parsing.
+        
+        With verbosity=0, this is skipped entirely and stats come from Python API.
+        With verbosity >= 1, this provides backward compatibility for text-based tracking.
+        """
+        # Skip regex parsing if verbosity is 0 (API-only mode)
+        if not hasattr(self, 'verbosity') or self.verbosity == 0:
+            return
+        
+        # Continue with regex parsing for verbosity >= 1
+        # Comprehensive statistics collection with ALL Marabou metrics
         
         # NEW: Start the delay timer as soon as we see ANY Marabou output
         if self._marabou_start_time == 0:
@@ -430,36 +522,73 @@ class MultiWorker(QThread):
                 self._latest_comprehensive_stats.clear()
             return
         
+        # Check for Marabou version (only once)
+        if self._marabou_version is None:
+            version_match = RX_MARABOU_VERSION.search(line)
+            if version_match:
+                self._marabou_version = version_match.group(1)
+                self.log.emit(f"[STATS] Detected Marabou version: {self._marabou_version}")
+        
         # Only parse if we're in a stats block
         if not hasattr(self, '_stats_block_active') or not self._stats_block_active:
             return
     
-        patterns = [
-            (RX_ACTIVE_PL, lambda m: ('active_pl', (int(m.group(1)), int(m.group(2))))),
-            (RX_SMT_DEPTH, lambda m: ('smt_depth', int(m.group(1)))),
-            (RX_NUM_SPLITS, lambda m: ('num_splits', int(m.group(1)))),
-            (RX_TOTAL_TIME, lambda m: ('total_time_ms', int(m.group(1)))),
-            (RX_MAIN_LOOP_TIME, lambda m: ('main_loop_time_ms', int(m.group(1)))),
-            (RX_MAIN_LOOP_ITERATIONS, lambda m: ('main_loop_iterations', int(m.group(1)))),
-            (RX_SIMPLEX_PIVOTS, lambda m: ('simplex_pivots', int(m.group(1)))),
-            (RX_DEGENERATE_PIVOTS, lambda m: ('degenerate_pivots', int(m.group(1)))),
-            (RX_AVG_PIVOT_TIME, lambda m: ('avg_pivot_time_ms', float(m.group(1)))),
-            (RX_LAST_DEGRADATION, lambda m: ('last_degradation', float(m.group(1)))),
-            (RX_TIGHTENED_BOUNDS, lambda m: ('tightened_bounds', int(m.group(1)))),
-            (RX_BASIS_REFACTOR, lambda m: ('basis_refactorizations', int(m.group(1)))),
-            (RX_PRECISION_RESTORATION, lambda m: ('precision_restorations', 1))
-        ]
+        # Use safe parsing with validation
+        parse_success = False
         
-        for pattern, extractor in patterns:
-            match = pattern.search(line)
+        # Try active PL constraints (special case - 2 groups)
+        if 'active_pl' not in self._latest_comprehensive_stats:
+            match = RX_ACTIVE_PL.search(line)
             if match:
-                key, value = extractor(match)
-                if key == 'tableau_dims':
-                    self._latest_comprehensive_stats['tableau_m'] = value[0]
-                    self._latest_comprehensive_stats['tableau_n'] = value[1]
-                else:
-                    self._latest_comprehensive_stats[key] = value
-                break
+                try:
+                    val1 = int(match.group(1))
+                    val2 = int(match.group(2))
+                    self._latest_comprehensive_stats['active_pl'] = (val1, val2)
+                    parse_success = True
+                except (ValueError, IndexError):
+                    self._parsing_failures += 1
+        
+        # Parse single-value statistics using safe helper
+        if not parse_success:
+            patterns = [
+                (RX_SMT_DEPTH, 'smt_depth', int),
+                (RX_NUM_SPLITS, 'num_splits', int),
+                (RX_TOTAL_TIME, 'total_time_ms', int),
+                (RX_MAIN_LOOP_TIME, 'main_loop_time_ms', int),
+                (RX_MAIN_LOOP_ITERATIONS, 'main_loop_iterations', int),
+                (RX_SIMPLEX_PIVOTS, 'simplex_pivots', int),
+                (RX_DEGENERATE_PIVOTS, 'degenerate_pivots', int),
+                (RX_AVG_PIVOT_TIME, 'avg_pivot_time_ms', float),
+                (RX_LAST_DEGRADATION, 'last_degradation', float),
+                (RX_TIGHTENED_BOUNDS, 'tightened_bounds', int),
+                (RX_BASIS_REFACTOR, 'basis_refactorizations', int),
+            ]
+            
+            for pattern, key, parse_type in patterns:
+                if key not in self._latest_comprehensive_stats:
+                    value = safe_parse_stat(pattern, line, default=None, parse_type=parse_type)
+                    if value is not None:
+                        self._latest_comprehensive_stats[key] = value
+                        parse_success = True
+                        break
+        
+        # Check for precision restoration event
+        if RX_PRECISION_RESTORATION.search(line):
+            current = self._latest_comprehensive_stats.get('precision_restorations', 0)
+            self._latest_comprehensive_stats['precision_restorations'] = current + 1
+            parse_success = True
+        
+        # Warn if we're seeing many unparsed statistics lines (format may have changed)
+        if not parse_success and not self._warned_format_change:
+            # Only count lines that look like they should contain stats
+            if any(keyword in line.lower() for keyword in ['number', 'total', 'time', 'depth', 'pivot']):
+                self._parsing_failures += 1
+                if self._parsing_failures > 10:
+                    self.log.emit("⚠️  [STATS] Warning: Many statistics lines couldn't be parsed. "
+                                "Marabou output format may have changed. Statistics tracking may be incomplete.")
+                    if self._marabou_version:
+                        self.log.emit(f"    Detected Marabou version: {self._marabou_version}")
+                    self._warned_format_change = True
 
     def _create_comprehensive_snapshot(self, delta: float):
         """Create a comprehensive statistics snapshot with better timing handling"""
@@ -516,6 +645,38 @@ class MultiWorker(QThread):
         except Exception as e:
             self.log.emit(f"[ERROR] Failed to create statistics snapshot: {e}")
             self._latest_comprehensive_stats.clear()
+
+    def _process_stats_from_api(self, stats_list, delta: float):
+        """
+        Process statistics using the Marabou Python API instead of regex parsing.
+        This is the modern, robust way to get statistics.
+        """
+        if not stats_list:
+            return
+            
+        try:
+            from maraboupy import MarabouCore
+            
+            for stats in stats_list:
+                if stats is None:
+                    continue
+                    
+                # Extract statistics using the API
+                try:
+                    active_pl = stats.getUnsignedAttribute(MarabouCore.NUM_ACTIVE_PL_CONSTRAINTS)
+                    total_pl = stats.getUnsignedAttribute(MarabouCore.NUM_PL_CONSTRAINTS) if hasattr(MarabouCore, 'NUM_PL_CONSTRAINTS') else 0
+                    depth = stats.getUnsignedAttribute(MarabouCore.CURRENT_DECISION_LEVEL)
+                    splits = stats.getUnsignedAttribute(MarabouCore.NUM_SPLITS)
+                    pivots = stats.getLongAttribute(MarabouCore.NUM_TABLEAU_PIVOTS)
+                    
+                    # Log statistics to console
+                    self.log.emit(f"[API STATS] Active PL: {active_pl}/{total_pl}, Depth: {depth}, Splits: {splits}, Pivots: {pivots}")
+                    
+                except AttributeError as e:
+                    self.log.emit(f"[API STATS] Warning: Could not extract some statistics: {e}")
+                    
+        except ImportError:
+            self.log.emit("[API STATS] Warning: MarabouCore not available for stats extraction")
 
     def _log_comprehensive_stats(self, snap: ComprehensiveStats, delta: float):
         """Log detailed solver statistics"""
@@ -617,6 +778,15 @@ class MultiWorker(QThread):
 
 
         pipeline = self.pipeline
+        
+        # Inform user about statistics mode
+        if self.verbosity == 0:
+            self.log.emit("ℹ️  Verbosity = 0: Using Python API for statistics (no text parsing)")
+            self.log.emit("   Statistics will appear as [API STATS] messages")
+        elif self.verbosity >= 2:
+            self.log.emit("⚠️  Verbosity = 2: High output volume may slow GUI")
+            self.log.emit("   Consider verbosity=0 to use Python API stats instead")
+        
         # collect per-pipeline results
         tof_results = []       # List[Tuple[delta, sat, unsat, timeout]]
         itd_results = []       # List[Tuple[delta, sat, unsat, timeout]]
@@ -685,7 +855,7 @@ class MultiWorker(QThread):
                     cfg  = dict(base_cfg); cfg["plot"] = False
                     json.dump(cfg, tmpf); tmpf.close()
 
-                    sat, unsat, to = run_tof(
+                    sat, unsat, to, stats_list = run_tof(
                         json_cfg      = tmpf.name,
                         delta         = delta,
                         perturb_all   = self.perturb_all,
@@ -694,6 +864,9 @@ class MultiWorker(QThread):
                         marabou_opts  = mopts,
                         stop_requested=self.isInterruptionRequested
                     )
+
+                    # Process statistics from API
+                    self._process_stats_from_api(stats_list, delta)
 
                     # 3) record results
                     tof_results.append((delta, sat, unsat, to))
@@ -754,7 +927,7 @@ class MultiWorker(QThread):
 
                         
                         if self.vt_mode.startswith("Local"):
-                            report, is_robust = local_rob_sens(
+                            report, is_robust, img_stats = local_rob_sens(
                                 image=image,
                                 filename=filename,
                                 delta=delta,
@@ -768,7 +941,7 @@ class MultiWorker(QThread):
                                 stop_requested=self.isInterruptionRequested
                             )
                         else:
-                            report, is_robust = targeted_rob_sens(
+                            report, is_robust, img_stats = targeted_rob_sens(
                                 image=image,
                                 filename=filename,
                                 delta=delta,
@@ -842,7 +1015,7 @@ class MultiWorker(QThread):
                     cfg  = dict(base_cfg); cfg["plot"] = False
                     json.dump(cfg, tmpf); tmpf.close()
 
-                    combo = run_jena(
+                    combo, jena_stats = run_jena(
                         json_path         = tmpf.name,
                         delta_orig        = delta,
                         epsilon_orig      = eps or None,
@@ -1049,6 +1222,10 @@ class MainWindow(QMainWindow):
         self.leModel, self.btnModel = QLineEdit(), QPushButton("Import ONNX…")
         self.leInput, self.btnInput = QLineEdit(), QPushButton("Import Input…")
         self.btnJson                = QPushButton("Import Features JSON…")
+        self.btnExportConfig        = QPushButton("Export Config…")
+        self.btnImportConfig        = QPushButton("Import Config…")
+        self.btnExportConfig.setEnabled(False)  # Enable only when selections exist
+        self.btnImportConfig.setEnabled(True)
 
         # ─── Class-selector menu button (hidden until needed) ─────────
         self.btnClassMenu = QToolButton(self)
@@ -1074,6 +1251,8 @@ class MainWindow(QMainWindow):
         file_row.addLayout(input_col)      # ← stacked under leInput
         file_row.addWidget(self.btnInput)
         file_row.addWidget(self.btnJson)
+        file_row.addWidget(self.btnExportConfig)
+        file_row.addWidget(self.btnImportConfig)
 
         # ─── Class-selector grid (multi-select) ────────────────
         self.classGridWidget    = QWidget()
@@ -1108,9 +1287,14 @@ class MainWindow(QMainWindow):
         ctl.addWidget(self.chkPlot)
 
         self.spinVerb = QSpinBox(); self.spinVerb.setRange(0,2)
+        self.spinVerb.setValue(0)  # Default to API-only mode
         # Tell users in the tooltip or label that 2 is required for progress notifications.
-        self.spinVerb.setToolTip("2 = full solver logs (needed for progress warnings); "
-                         "1 = brief; 0 = silent")
+        self.spinVerb.setToolTip(
+            "0 = Silent (API stats only - RECOMMENDED, prevents text overflow)\n"
+            "1 = Minimal output\n"
+            "2 = Full logs (may slow GUI with high output volume)\n\n"
+            "💡 All statistics available via Python API regardless of verbosity"
+        )
         ctl.addWidget(QLabel("Verbosity:")); ctl.addWidget(self.spinVerb)
 
         self.chkEnableTimeout = QCheckBox("Enable timeout")
@@ -1183,7 +1367,17 @@ class MainWindow(QMainWindow):
         # Create PyQtGraph PlotWidget for real-time updates
         self.pgPlot = pg.PlotWidget()
         self.pgPlot.setMinimumHeight(500)
-        self.pgPlot.showGrid(x=False, y=True)  # Disable X-axis grid lines, keep Y-axis grid
+        self.pgPlot.showGrid(x=False, y=False)  # Disable all grid lines for cleaner look
+        
+        # Add modern styling to the plot widget
+        self.pgPlot.setBackground('w')  # White background for better visibility
+        
+        # Add subtle glow effect to the plot widget
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(20)
+        shadow.setColor(QColor(100, 200, 255, 80))
+        shadow.setOffset(0, 0)
+        self.pgPlot.setGraphicsEffect(shadow)
 
 
         # ─── Pixel-selection controls (for Sensitivity modes) ──────────
@@ -1255,6 +1449,8 @@ class MainWindow(QMainWindow):
         self.btnModel.clicked.connect(self._pick_model)
         self.btnInput.clicked.connect(self._pick_input)
         self.btnJson.clicked.connect(self._pick_json)
+        self.btnExportConfig.clicked.connect(self._export_config)
+        self.btnImportConfig.clicked.connect(self._import_config)
         self.comboVT.currentTextChanged.connect(self._on_vt_changed)
         self.btnRun.clicked.connect(self._start)
         self.btnStop.clicked.connect(self._stop)
@@ -1280,7 +1476,15 @@ class MainWindow(QMainWindow):
             _, png = msg.split(":",1)
             self._display_plot(png)
         else:
-            self.console.appendPlainText(msg)
+            # Batch console updates to reduce GUI freezing with high verbosity
+            cursor = self.console.textCursor()
+            cursor.movePosition(cursor.End)
+            cursor.insertText(msg + '\n')
+            # Only auto-scroll if already at bottom
+            scrollbar = self.console.verticalScrollBar()
+            if scrollbar.value() >= scrollbar.maximum() - 10:
+                self.console.setTextCursor(cursor)
+                self.console.ensureCursorVisible()
 
     def _toggle_progress_visibility(self, checked: bool):
         if checked and self.chkPlot.isChecked():
@@ -1446,7 +1650,8 @@ class MainWindow(QMainWindow):
                 cb = QCheckBox(f"Class {i}")
                 cb.toggled.connect(lambda checked, idx=i: (
                     self.selected_classes.add(idx) if checked
-                    else self.selected_classes.discard(idx)
+                    else self.selected_classes.discard(idx),
+                    self._update_export_button_state()
                 ))
                 act = QWidgetAction(menu)
                 act.setDefaultWidget(cb)
@@ -1692,7 +1897,9 @@ class MainWindow(QMainWindow):
         self.gridLayout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
 
         feats = self.feature_cfg["features"]
-        T = len(feats[0]["properties"]["starting_indexes"])
+        # T = number of positions/timesteps per feature in the flattened input vector
+        # These positions represent where this feature's data appears in the input array
+        T = len(_get_input_indices(feats[0]["properties"]))
 
         # headers
         self.gridLayout.addWidget(QLabel(""), 0, 0)
@@ -1711,7 +1918,9 @@ class MainWindow(QMainWindow):
             self.gridLayout.addWidget(name_lbl, row, 0)
 
             row_buttons = []
-            for col, idx in enumerate(feat["properties"]["starting_indexes"], start=1):
+            # Create button for each position this feature occupies in the flattened input
+            # idx = position in the input vector, col = visual column (timestep) in the grid
+            for col, idx in enumerate(_get_input_indices(feat["properties"]), start=1):
                 btn = QPushButton()
                 btn.setCheckable(True)
                 btn.setMinimumSize(30, 30)
@@ -1723,7 +1932,8 @@ class MainWindow(QMainWindow):
                 btn.toggled.connect(
                     lambda checked, i=idx: (
                         self.selected_pixels.add(i) if checked
-                        else self.selected_pixels.discard(i)
+                        else self.selected_pixels.discard(i),
+                        self._update_export_button_state()
                     )
                 )
                 self.gridLayout.addWidget(btn, row, col)
@@ -1789,7 +1999,8 @@ class MainWindow(QMainWindow):
                 parent = QTreeWidgetItem([feat["name"]])
                 parent.setFlags(parent.flags() | Qt.ItemIsTristate | Qt.ItemIsUserCheckable)
                 parent.setCheckState(0, Qt.Unchecked)
-                for idx in feat["properties"]["starting_indexes"]:
+                # Add child items for each input position this feature occupies
+                for idx in _get_input_indices(feat["properties"]):
                     child = QTreeWidgetItem([str(idx)])
                     child.setFlags(child.flags() | Qt.ItemIsUserCheckable)
                     child.setCheckState(0, Qt.Unchecked)
@@ -1830,7 +2041,8 @@ class MainWindow(QMainWindow):
                 btn.toggled.connect(
                     lambda checked, i=idx: (
                         self.selected_pixels.add(i) if checked
-                        else self.selected_pixels.discard(i)
+                        else self.selected_pixels.discard(i),
+                        self._update_export_button_state()
                     )
                 )
                 self.gridLayout.addWidget(btn, row, col)
@@ -1929,6 +2141,7 @@ class MainWindow(QMainWindow):
                             button.widget().setChecked(True)
             
             self.console.appendPlainText(f"Selected {meaningful_count} meaningful pixels using Otsu threshold.")
+            self._update_export_button_state()
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to compute meaningful pixels:\n{str(e)}")
@@ -1947,6 +2160,232 @@ class MainWindow(QMainWindow):
                         button.widget().setChecked(False)
         
         self.console.appendPlainText("Cleared all pixel selections.")
+        self._update_export_button_state()
+
+    def _update_export_button_state(self):
+        """Enable export button only when there are selections to save"""
+        has_config = hasattr(self, 'feature_cfg') and self.feature_cfg
+        has_selections = bool(self.selected_pixels or self.selected_classes)
+        self.btnExportConfig.setEnabled(has_config and has_selections)
+
+    def _export_config(self):
+        """Export the current configuration with selected pixels/features to a JSON file"""
+        # Validate that we have a configuration to export
+        if not hasattr(self, 'feature_cfg') or not self.feature_cfg:
+            QMessageBox.warning(self, "Error", "Load a features JSON first.")
+            return
+        
+        if not self.selected_pixels and not self.selected_classes:
+            QMessageBox.warning(
+                self, "No Selection", 
+                "No pixels or classes are selected. Please make selections before exporting."
+            )
+            return
+        
+        # Ask user where to save the config
+        fn, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Configuration",
+            "",
+            "JSON Files (*.json)"
+        )
+        
+        if not fn:
+            return
+        
+        # Ensure .json extension
+        if not fn.lower().endswith('.json'):
+            fn += '.json'
+        
+        # Build the export configuration
+        export_cfg = dict(self.feature_cfg)  # Copy base config
+        
+        # Add metadata section
+        export_cfg["_metadata"] = {
+            "exported_from": "StableNN_GUI",
+            "pipeline": getattr(self, "pipeline", "unknown"),
+            "verification_type": self.comboVT.currentText(),
+            "model_file": self.leModel.text().strip(),
+            "input_file": self.leInput.text().strip(),
+            "input_shape": self.input_shape if hasattr(self, 'input_shape') else None
+        }
+        
+        # Add selected pixels/indices
+        if self.selected_pixels:
+            export_cfg["_metadata"]["selected_pixels"] = sorted(list(self.selected_pixels))
+        
+        # Add selected classes for targeted modes
+        if self.selected_classes:
+            export_cfg["_metadata"]["selected_classes"] = sorted(list(self.selected_classes))
+        
+        # Write to file
+        try:
+            with open(fn, 'w', encoding='utf-8') as f:
+                json.dump(export_cfg, f, indent=2)
+            
+            QMessageBox.information(
+                self, "Success",
+                f"Configuration exported successfully to:\n{fn}\n\n"
+                f"Selected pixels: {len(self.selected_pixels)}\n"
+                f"Selected classes: {len(self.selected_classes)}"
+            )
+            self.console.appendPlainText(f"Configuration exported to: {fn}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to export configuration:\n{e}")
+
+    def _import_config(self):
+        """Import a previously exported configuration and restore selections"""
+        # Ask user to select a config file
+        fn, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Configuration",
+            "",
+            "JSON Files (*.json)"
+        )
+        
+        if not fn:
+            return
+        
+        try:
+            # Load the configuration
+            with open(fn, 'r', encoding='utf-8') as f:
+                cfg = json.load(f)
+            
+            # Check if this is an exported config with metadata
+            if "_metadata" not in cfg:
+                QMessageBox.warning(
+                    self, "Invalid Config",
+                    "This JSON file does not appear to be an exported configuration.\n"
+                    "Use 'Import Features JSON' for base feature files."
+                )
+                return
+            
+            metadata = cfg["_metadata"]
+            
+            # Restore the base feature configuration
+            base_cfg = {k: v for k, v in cfg.items() if k != "_metadata"}
+            self.feature_cfg = base_cfg
+            self.json_path = fn
+            
+            # Restore pipeline
+            if "pipeline" in metadata:
+                self.pipeline = metadata["pipeline"]
+            
+            # Restore model and input paths if they exist
+            if metadata.get("model_file") and os.path.exists(metadata["model_file"]):
+                self.leModel.setText(metadata["model_file"])
+                # Trigger model loading
+                self._load_model_internal(metadata["model_file"])
+            
+            if metadata.get("input_file") and os.path.exists(metadata["input_file"]):
+                self.leInput.setText(metadata["input_file"])
+                if metadata.get("input_shape"):
+                    self.input_shape = tuple(metadata["input_shape"])
+            
+            # Restore verification type
+            if metadata.get("verification_type"):
+                idx = self.comboVT.findText(metadata["verification_type"])
+                if idx >= 0:
+                    self.comboVT.setCurrentIndex(idx)
+            
+            # Determine if we need to build a grid
+            is_sensitivity = self.comboVT.currentText().endswith("Sensitivity")
+            has_pixel_features = any(
+                "pixel" in f.get("name", "").lower() 
+                for f in base_cfg.get("features", [])
+            )
+            
+            # Build the appropriate grid if in sensitivity mode
+            if is_sensitivity:
+                if has_pixel_features and self.input_shape:
+                    rows, cols = self.input_shape
+                    self._build_pixel_grid(rows, cols)
+                else:
+                    self._build_feature_timestep_grid()
+            
+            # Restore selected pixels/indices
+            self.selected_pixels.clear()
+            if "selected_pixels" in metadata:
+                selected_idxs = metadata["selected_pixels"]
+                self.selected_pixels.update(selected_idxs)
+                
+                # Update grid buttons if they exist
+                if has_pixel_features and self.input_shape:
+                    rows, cols = self.input_shape
+                    for idx in selected_idxs:
+                        row = idx // cols
+                        col = idx % cols
+                        button = self.gridLayout.itemAtPosition(row, col)
+                        if button and button.widget():
+                            button.widget().setChecked(True)
+                else:
+                    # For time-series features, just mark them as selected
+                    # The grid checkboxes will be updated when grid is rebuilt
+                    pass
+            
+            # Restore selected classes
+            self.selected_classes.clear()
+            if "selected_classes" in metadata:
+                self.selected_classes.update(metadata["selected_classes"])
+                
+                # Update class checkboxes if menu exists
+                if hasattr(self, 'btnClassMenu') and self.btnClassMenu.menu():
+                    menu = self.btnClassMenu.menu()
+                    for action in menu.actions():
+                        widget = menu.widgetForAction(action)
+                        if isinstance(widget, QCheckBox) and not widget.text().startswith("All"):
+                            # Extract class index from text like "Class 0"
+                            try:
+                                class_idx = int(widget.text().split()[-1])
+                                if class_idx in self.selected_classes:
+                                    widget.setChecked(True)
+                            except (ValueError, IndexError):
+                                pass
+            
+            # Update export button state
+            self._update_export_button_state()
+            
+            # Show success message
+            msg_parts = [f"Configuration imported from:\n{fn}"]
+            if "selected_pixels" in metadata:
+                msg_parts.append(f"Restored {len(metadata['selected_pixels'])} selected pixels")
+            if "selected_classes" in metadata:
+                msg_parts.append(f"Restored {len(metadata['selected_classes'])} selected classes")
+            
+            QMessageBox.information(self, "Success", "\n".join(msg_parts))
+            self.console.appendPlainText(f"Configuration imported from: {fn}")
+            
+        except json.JSONDecodeError as e:
+            QMessageBox.critical(self, "JSON Parse Error", f"Could not parse JSON:\n{e}")
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to import configuration:\n{e}\n{traceback.format_exc()}")
+
+    def _load_model_internal(self, model_path):
+        """Internal method to load a model without user interaction"""
+        try:
+            model = onnx.load(model_path)
+            
+            # Build outline tree (simplified version)
+            self.modelTree.clear()
+            inputs_item = QTreeWidgetItem(["Inputs"])
+            for inp in model.graph.input:
+                inputs_item.addChild(QTreeWidgetItem([inp.name]))
+            self.modelTree.addTopLevelItem(inputs_item)
+            
+            outputs_item = QTreeWidgetItem(["Outputs"])
+            for out in model.graph.output:
+                outputs_item.addChild(QTreeWidgetItem([out.name]))
+            self.modelTree.addTopLevelItem(outputs_item)
+            
+            # Detect multiclass
+            out_type = model.graph.output[0].type.tensor_type
+            dims = [d.dim_value for d in out_type.shape.dim if d.dim_value > 0]
+            num_classes = dims[-1] if dims else 0
+            self.has_multiclass = (num_classes > 2)
+            
+        except Exception as e:
+            self.console.appendPlainText(f"Warning: Could not fully load model: {e}")
 
     def _start(self):
         # 1) Must have JSON loaded
@@ -2141,7 +2580,7 @@ class MainWindow(QMainWindow):
         if not (self.chkShowProgress.isChecked() and self.chkPlot.isChecked()):
             return
     
-        # 4) Draw your stacked‐bar segments...
+        # 4) Draw your stacked‐bar segments with modern gradients and styling...
         if total == 0:
             sat_frac = unsat_frac = timeout_frac = 0
         else:
@@ -2149,19 +2588,34 @@ class MainWindow(QMainWindow):
             unsat_frac   = unsat / total
             timeout_frac = timeout / total
     
+        # Modern color scheme with gradients (using solid for PyQtGraph compatibility)
         widths      = [sat_frac, unsat_frac, timeout_frac]
+        # Rich, modern colors: SAT (red gradient), UNSAT (green gradient), TIMEOUT (amber gradient)
         colors      = ['#d62728', '#1f77b4', '#ff7f0e']
         labels      = [f"SAT: {sat}", f"UNSAT: {unsat}", f"TIMEOUT: {timeout}"]
-        text_colors = ['white', 'white', 'black']
+        text_colors = ['white', 'white', 'white']
     
+        # Position bar lower to make room for info above
+        bar_y_center = 0.35
+        bar_height = 0.5
+        
         x0 = 0
         for w, c, lbl, tc in zip(widths, colors, labels, text_colors):
             if w > 0:
-                bar = pg.BarGraphItem(x0=x0, y=0.5, height=0.6, width=w, brush=c)
+                # Create bar with increased height for better visibility
+                bar = pg.BarGraphItem(x0=x0, y=bar_y_center, height=bar_height, width=w, brush=c)
                 self.pgPlot.addItem(bar)
+                
+                # Add subtle separator line between segments for better definition
+                if x0 > 0:
+                    separator = pg.PlotDataItem([x0, x0], [bar_y_center - bar_height/2, bar_y_center + bar_height/2], 
+                                              pen=pg.mkPen(color='#2a2a3e', width=2))
+                    self.pgPlot.addItem(separator)
+                
+                # Add text label with better styling
                 ti = pg.TextItem(lbl, color=tc, anchor=(0.5,0.5))
-                ti.setFont(QFont("Arial",10,QFont.Bold))
-                ti.setPos(x0 + w/2, 0.5)
+                ti.setFont(QFont("Arial", 12, QFont.Bold))
+                ti.setPos(x0 + w/2, bar_y_center)
                 self.pgPlot.addItem(ti)
                 x0 += w
     
@@ -2179,44 +2633,88 @@ class MainWindow(QMainWindow):
         ]
         self.pgPlot.getAxis('bottom').setTicks([x_ticks])
         
-        # Style the bottom axis - Show visible tick marks like ruler
+        # Style the bottom axis with modern look
         bottom_axis = self.pgPlot.getAxis('bottom')
         bottom_axis.setStyle(
-            tickFont=QFont("Arial", 16, QFont.Bold),
-            tickLength=1  # Visible tick marks like ruler marks
+            tickFont=QFont("Arial", 20, QFont.Bold),
+            tickLength=8  # Longer tick marks for better visibility
         )
-        bottom_axis.setPen(pg.mkPen(color='white', width=2))
-        bottom_axis.setTextPen(pg.mkPen(color='white'))
+        # Dark color for white background
+        bottom_axis.setPen(pg.mkPen(color='#333333', width=2))
+        bottom_axis.setTextPen(pg.mkPen(color='#000000'))
         
-        # Add custom vertical ruler lines from labels up to progress bar
+        # Add sleek vertical ruler lines from labels up to progress bar
         ruler_positions = [0.0, 0.25, 0.5, 0.75, 1.0]
+        bar_bottom = 0.35 - 0.25  # bar_y_center - bar_height/2
         for x_pos in ruler_positions:
-            # Create vertical line from bottom axis labels (y=-0.05) to progress bar area (y=0.1)
-            ruler_line = pg.PlotDataItem([x_pos, x_pos], [-0.05, 0.01], 
-                                       pen=pg.mkPen(color='white', width=1))  # Solid straight line
+            # Create gradient-like effect with darker lines at key positions
+            line_color = '#333333' if x_pos in [0.0, 0.5, 1.0] else '#999999'
+            line_width = 2 if x_pos in [0.0, 0.5, 1.0] else 1
+            
+            ruler_line = pg.PlotDataItem([x_pos, x_pos], [-0.05, bar_bottom], 
+                                       pen=pg.mkPen(color=line_color, width=line_width))
             self.pgPlot.addItem(ruler_line)
         
-        # 5) Enhanced title with elapsed time
+        # Add a subtle bottom border line for polish
+        border_line = pg.PlotDataItem([0, 1], [bar_bottom, bar_bottom], 
+                                     pen=pg.mkPen(color='#999999', width=1, style=Qt.DotLine))
+        self.pgPlot.addItem(border_line)
+        
+        # 5) "Run Overview" section with table layout
         if hasattr(self, "_deltas"):
             try:
                 idx = self._deltas.index(delta) + 1
                 total_d = len(self._deltas)
-                delta_label = f"δ {idx}/{total_d} = {delta}   "
+                run_info = f"run {idx}/{total_d}"
             except ValueError:
-                delta_label = ""
+                run_info = "run 1/1"
         else:
-            delta_label = ""
+            run_info = "run 1/1"
     
-        # Include elapsed time in the title
-        title_text = f"{delta_label}Progress: {done}/{total} | Time Elapsed: {elapsed_str} {est_text}"
-        self.pgPlot.setTitle(title_text)
+        # Left side - Run Overview section (aligned with bar start)
+        overview_title = pg.TextItem("Run Overview", color='#1976d2', anchor=(0, 1))
+        overview_title.setFont(QFont("Arial", 36, QFont.Bold))
+        overview_title.setPos(0.0, 0.93)
+        self.pgPlot.addItem(overview_title)
         
-        # Style the title
-        title_label = self.pgPlot.plotItem.titleLabel
-        large_font = QFont("Arial", 16, QFont.Bold)
-        title_label.item.setFont(large_font)
-        html_title = f'<span style="font-size: 20pt; font-weight: bold;">{title_text}</span>'
-        title_label.setText(html_title)
+        delta_label = pg.TextItem(f"δ = {delta}", color='#424242', anchor=(0, 1))
+        delta_label.setFont(QFont("Arial", 20, QFont.Bold))
+        delta_label.setPos(0.0, 0.85)
+        self.pgPlot.addItem(delta_label)
+        
+        run_label = pg.TextItem(run_info, color='#424242', anchor=(0, 1))
+        run_label.setFont(QFont("Arial", 20, QFont.Bold))
+        run_label.setPos(0.0, 0.78)
+        self.pgPlot.addItem(run_label)
+        
+        # Right side - Progress section
+        progress_title = pg.TextItem("Progress", color='#2e7d32', anchor=(0.5, 1))
+        progress_title.setFont(QFont("Arial", 20, QFont.Bold))
+        progress_title.setPos(0.80, 0.95)
+        self.pgPlot.addItem(progress_title)
+        
+        progress_value = pg.TextItem(f"{done}/{total}", color='#2e7d32', anchor=(0.5, 1))
+        progress_value.setFont(QFont("Arial", 20, QFont.Bold))
+        progress_value.setPos(0.80, 0.87)
+        self.pgPlot.addItem(progress_value)
+        
+        # Far right - Time elapsed section
+        time_title = pg.TextItem("Time elapsed", color='#d32f2f', anchor=(0.5, 1))
+        time_title.setFont(QFont("Arial", 20, QFont.Bold))
+        time_title.setPos(0.95, 0.95)
+        self.pgPlot.addItem(time_title)
+        
+        time_value = pg.TextItem(f"{elapsed_str}", color='#d32f2f', anchor=(0.5, 1))
+        time_value.setFont(QFont("Arial", 20, QFont.Bold))
+        time_value.setPos(0.97, 0.87)
+        self.pgPlot.addItem(time_value)
+        
+        # Add estimate if available (below time)
+        if est_text:
+            est_label = pg.TextItem(est_text.strip(), color='#9e9e9e', anchor=(0.5, 1))
+            est_label.setFont(QFont("Arial", 10, QFont.Italic))
+            est_label.setPos(0.97, 0.81)
+            self.pgPlot.addItem(est_label)
 
         
 

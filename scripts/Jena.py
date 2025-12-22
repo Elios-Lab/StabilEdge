@@ -9,6 +9,12 @@ from matplotlib.figure import Figure
 from typing import List, Tuple, Optional, Dict, Any, Callable
 
 
+def _get_input_indices(feature_props: Dict[str, Any]) -> List[int]:
+    """Get input indices from feature properties, supporting both old and new naming."""
+    # Try new naming first, fall back to old naming for backward compatibility
+    return feature_props.get("input_indices") or feature_props.get("starting_indexes", [])
+
+
 def run_jena(
     json_path: str,
     delta_orig: float,
@@ -20,6 +26,29 @@ def run_jena(
     stop_requested: Callable[[], bool] = lambda: False,
     progress_callback: Optional[Callable[[int,int,int,int,int],None]] = None
 ) ->  List[Tuple[Optional[float], float, int, int, int]]:
+    """
+    Verify time-series forecasting model robustness using Marabou.
+    
+    This function handles multi-feature time-series inputs where each feature
+    may have multiple timesteps. The 'input_indices' in the JSON config specify
+    which positions in the FLATTENED input vector correspond to each feature,
+    NOT temporal ordering. The code respects temporal structure through the
+    feature grouping defined in the config.
+    
+    Args:
+        json_path: Path to feature configuration JSON
+        delta_orig: Perturbation magnitude in original feature space
+        epsilon_orig: Output deviation threshold in original output space
+        perturb_all: If True, perturb all features; if False, only user-selected ones
+        selected_flat_idxs: User-selected positions in flattened input (when perturb_all=False)
+        plot: Whether to generate result heatmap
+        marabou_opts: Solver configuration options
+        stop_requested: Callback to check for cancellation
+        progress_callback: Callback for progress updates
+    
+    Returns:
+        List of (epsilon, epsilon_norm, delta, sat, unsat, timeout) tuples
+    """
     
     # 1) Load config
     with open(json_path, "r") as f:
@@ -27,42 +56,95 @@ def run_jena(
 
     features = cfg.get("features", [])
 
-    # 2) Build domain map and feature ranges
-    domain_map: Dict[int, Tuple[float, float]] = {}
-    feature_ranges: List[float] = []
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTION 2: Build Feature-to-Position Mapping
+    # ═══════════════════════════════════════════════════════════════════════
+    # Purpose: Map each position in the flattened input vector to its feature's
+    #          valid domain (min, max). This preserves the semantic meaning of
+    #          each input dimension.
+    #
+    # Example: If temperature readings occupy positions [0,1,2] and humidity
+    #          occupies [3,4,5] in a 6-element input vector, this maps:
+    #          {0: (temp_min, temp_max), 1: (temp_min, temp_max), ...,
+    #           3: (humid_min, humid_max), ...}
+    #
+    # The 'input_indices' field in JSON specifies which vector positions belong
+    # to each feature, NOT the temporal order of measurements.
+    # ═══════════════════════════════════════════════════════════════════════
+    domain_map: Dict[int, Tuple[float, float]] = {}  # position → (min, max)
+    feature_ranges: List[float] = []  # range (max-min) for each feature
+    
     for feat in features:
         lo = feat["properties"]["input_domain"]["min"]
         hi = feat["properties"]["input_domain"]["max"]
         feature_ranges.append(hi - lo)
-        for idx in feat["properties"]["starting_indexes"]:
+        
+        # Map each input position that belongs to this feature
+        for idx in _get_input_indices(feat["properties"]):
             domain_map[idx] = (lo, hi)
 
-    # 3) Build normalized deltas
-    perturbed_index_to_delta: Dict[int, float] = {}
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTION 3: Compute Feature-Specific Normalized Perturbations
+    # ═══════════════════════════════════════════════════════════════════════
+    # Purpose: Convert the user-specified perturbation (delta_orig) from
+    #          original feature units to normalized [0,1] space.
+    #
+    #
+    # Two modes:
+    #   - perturb_all=True: Apply perturbation to ALL input positions
+    #   - perturb_all=False: Apply only to user-selected positions (selected_flat_idxs)
+    #
+    # Note: selected_flat_idxs contains POSITIONS in the flattened array that
+    #       the user chose to perturb, NOT timestep indices.
+    # ═══════════════════════════════════════════════════════════════════════
+    perturbed_index_to_delta: Dict[int, float] = {}  # position → normalized delta
+    
     if perturb_all:
+        # Apply perturbation to every input position
         for idx, (lo, hi) in domain_map.items():
             perturbed_index_to_delta[idx] = delta_orig / (hi - lo)
     else:
+        # Apply perturbation only to user-selected positions
         for idx in selected_flat_idxs:
             if idx in domain_map:
                 lo, hi = domain_map[idx]
                 perturbed_index_to_delta[idx] = delta_orig / (hi - lo)
             else:
-                print(f"→ Warning: selected index {idx} not in domain_map")
+                print(f"→ Warning: User-selected position {idx} not found in feature mapping")
+                print(f"   Valid positions are: {sorted(domain_map.keys())}")
 
-    # 4) Normalize epsilon
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTION 4: Normalize Output Threshold (Epsilon)
+    # ═══════════════════════════════════════════════════════════════════════
+    # Purpose: Convert output deviation threshold from original units to
+    #          normalized space, matching the network's output range.
+    #
+    # Example: If forecasting temperature in range [10°C, 35°C] and user wants
+    #          ε=2°C tolerance, normalized ε = 2/(35-10) ≈ 0.08
+    # ═══════════════════════════════════════════════════════════════════════
     if epsilon_orig is not None:
         if cfg.get("output_domain"):
             od = cfg["output_domain"]
             eps_den = od["max"] - od["min"]
         else:
+            # Fallback: use largest input feature range as proxy
             eps_den = max(feature_ranges) if feature_ranges else 1.0
         epsilon_norm = epsilon_orig / eps_den
     else:
         epsilon_norm = None
 
 
-    # 5) Load inputs
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTION 5: Load and Prepare Input Samples
+    # ═══════════════════════════════════════════════════════════════════════
+    # Purpose: Load input data and ensure it's in (n_samples, features) format.
+    #
+    # The input file contains FLATTENED feature vectors. For time-series with
+    # multiple features and timesteps, all are concatenated into a 1D array.
+    #
+    # Example: 3 features × 10 timesteps = 30-element flattened vector
+    #          [temp_t0, temp_t1, ..., temp_t9, humid_t0, ..., humid_t9, press_t0, ...]
+    # ═══════════════════════════════════════════════════════════════════════
     inp_path = (
         cfg.get("file_paths", {}).get("input_file")
         or cfg.get("file_paths", {}).get("input_path")
@@ -70,25 +152,39 @@ def run_jena(
     )
     raw = np.load(inp_path)
 
-    # figure out how many features we expect per sample
+    # Calculate expected input dimensionality from feature config
+    # This counts total positions across all features (including all timesteps)
     flat_count = sum(
-        len(feat["properties"]["starting_indexes"])
+        len(_get_input_indices(feat["properties"]))
         for feat in features
     )
 
-    # if raw.size == flat_count, it’s a single sample → wrap it
+    # Handle both single-sample and multi-sample inputs
     if raw.size == flat_count:
+        # Single sample: reshape to (1, flat_count)
         inputs = raw.reshape(1, flat_count)
     else:
-        # otherwise assume raw is (n_samples, flat_count)
+        # Multiple samples: assume already in (n_samples, flat_count) format
         inputs = raw
 
     # inputs = np.load(inp_path)
 
     sat_count = unsat_count = timeout_count = 0
     results: List[Tuple[Optional[float], float, int, int]] = []
+    all_stats = []  # Collect all stats objects
 
-    # 6) Verify each sample
+    # ═══════════════════════════════════════════════════════════════════════
+    # SECTION 6: Robustness Verification Loop
+    # ═══════════════════════════════════════════════════════════════════════
+    # Purpose: For each input sample, verify whether perturbed inputs within
+    #          δ-ball can cause output deviation > ε.
+    #
+    # Process:
+    #   1. Get nominal (unperturbed) output value
+    #   2. Set input bounds: nominal ± δ for selected positions, exact for others
+    #   3. Constrain output to be outside [nominal-ε, nominal+ε]
+    #   4. Ask Marabou: SAT = adversarial example exists, UNSAT = robust
+    # ═══════════════════════════════════════════════════════════════════════
     total = len(inputs)
     for sidx, sample in enumerate(inputs, start=1):
         if stop_requested():
@@ -102,7 +198,9 @@ def run_jena(
             flat = sample.flatten()
             nom_val = float(net.evaluateWithoutMarabou([flat])[0].item())
 
-            # set input bounds
+            # Set bounds for each input position
+            # - If position is selected for perturbation: [base-δ, base+δ]
+            # - Otherwise: fix to exact nominal value [base, base]
             for i, var in enumerate(inVars.flatten()):
                 base = flat[i]
                 if perturb_all or i in perturbed_index_to_delta:
@@ -110,6 +208,7 @@ def run_jena(
                     net.setLowerBound(var, base - d)
                     net.setUpperBound(var, base + d)
                 else:
+                    # Fix this position to nominal value (no perturbation)
                     net.setLowerBound(var, base)
                     net.setUpperBound(var, base)
 
@@ -125,6 +224,8 @@ def run_jena(
                 net.upperBounds.pop(outVars[0, 0], None)
                 net.setLowerBound(outVars[0, 0], nom_val + epsilon_norm)
                 exitCode, vals, stats = net.solve(options=opts)
+            
+            all_stats.append(stats)  # Store stats object
 
             # record result
             if exitCode == 'sat':
@@ -221,4 +322,4 @@ def run_jena(
         fig.savefig(tmp.name, bbox_inches="tight")
         print(f"__PLOT__:{tmp.name}")
 
-    return results
+    return results, all_stats

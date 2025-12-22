@@ -154,25 +154,26 @@ def local_rob_sens(
     filename: str,
     delta: float,
     onnx_path: str,
-    tmin: float,
-    tmax: float,
+    tmin: float = 0.0,
+    tmax: float = 255.0,
     selected_classes: Optional[List[int]] = None,
     verbosity: int = 0,
     marabou_opts: Dict[str, Any] = {},
     progress_callback: Optional[Callable] = None,
     stop_requested: Callable[[], bool] = lambda: False
-) -> Tuple[Dict, str]:
+) -> Tuple[Dict, str, List[Any]]:
     # 1. Compute normalized delta (and print raw vs. normalized)
     normalized_delta = normalize_difference(delta, tmin=tmin, tmax=tmax)
     # This print will now actually show you both values:
     print(f"Delta before normalization: {delta}, Delta normalized: {normalized_delta:.6f}")
 
-    net0 = Marabou.read_onnx(onnx_path)
-    inp0 = net0.inputVars[0][0]
-    out0 = net0.outputVars[0][0]
+    # Load network ONCE for reuse across all alternative classes
+    net = Marabou.read_onnx(onnx_path)
+    inp = net.inputVars[0][0]
+    out = net.outputVars[0][0]
 
     # FIX: Handle shape mismatch between image and model input
-    expected_shape = inp0.shape
+    expected_shape = inp.shape
     image_flat = image.flatten()
     
     print(f"Image shape: {image.shape}, flattened size: {image_flat.size}")
@@ -197,23 +198,20 @@ def local_rob_sens(
     # Reshape to match expected input shape
     model_input = model_input.reshape(expected_shape)
     
-    orig_out = net0.evaluateWithoutMarabou([model_input])[0]
+    orig_out = net.evaluateWithoutMarabou([model_input])[0]
     orig_pred = int(np.argmax(orig_out))
     print(f"Original predicted class: {orig_pred}")
 
-    num_classes = out0.shape[0]
+    num_classes = out.shape[0]
     targets = selected_classes or [c for c in range(num_classes) if c != orig_pred]
     adversarial_outcomes: List[Dict[str, Any]] = []
     statuses: List[str] = []
+    all_stats = []  # Collect all stats objects
 
     for alt in targets:
         if stop_requested():
             print(f"→ Stop requested inside ITD at class {alt}")
             break
-
-        net = Marabou.read_onnx(onnx_path)
-        inp = net.inputVars[0][0]
-        out = net.outputVars[0][0]
 
         # Use the properly shaped input for bounds setting
         # For meaningful mask computation, we need to handle the size mismatch
@@ -236,13 +234,15 @@ def local_rob_sens(
             )
 
         # enforce that the logit for class `alt` ≥ logit(j) + ε for all j≠alt
+        # Mark as property so we can clear it after solving
         for j in range(num_classes):
             if j == alt:
                 continue
-            net.addInequality([out[j], out[alt]], [1.0, -1.0], -1e-6)
+            net.addInequality([out[j], out[alt]], [1.0, -1.0], -1e-6, isProperty=True)
 
         opts = Marabou.createOptions(**marabou_opts)
         exit_code, vals, stats = net.solve(options=opts)
+        all_stats.append(stats)  # Collect stats object
         lc = exit_code.lower()
         statuses.append(lc)
 
@@ -258,6 +258,9 @@ def local_rob_sens(
                     "original_logits": orig_out,
                     "adv_logits": adv_out
                 })
+        
+        # Clear property constraints before next alternative class
+        net.clearProperty()
 
     # collapse all per-alt statuses into one final verdict:
     #  - if any SAT → overall SAT
@@ -277,7 +280,7 @@ def local_rob_sens(
     }
     detailed_report.append(report)
 
-    return report, overall
+    return report, overall, all_stats
 
 
 # --------------------------------------------
@@ -288,27 +291,28 @@ def targeted_rob_sens(
     filename: str,
     delta: float,
     onnx_path: str,
-    tmin: float,
-    tmax: float,
-    perturb_all_pixels: bool,
-    selected_idxs: List[int],
+    tmin: float = 0.0,
+    tmax: float = 255.0,
+    perturb_all_pixels: bool = False,
+    selected_idxs: List[int] = [],
     selected_classes: Optional[List[int]] = None,
     verbosity: int = 0,
     marabou_opts: Dict[str,Any] = {},
     progress_callback: Optional[Callable] = None,
     stop_requested: Callable[[], bool] = lambda: False
-) -> Tuple[Dict, str]:
+) -> Tuple[Dict, str, List[Any]]:
     
     # 1. Normalize (and print)
     normalized_delta = normalize_difference(delta, tmin=tmin, tmax=tmax)
     print(f"Delta before normalization: {delta}, Delta normalized: {normalized_delta:.4f}")
 
-    base_net = Marabou.read_onnx(onnx_path)
-    base_inp = base_net.inputVars[0][0]
-    base_out = base_net.outputVars[0][0]
+    # Load network ONCE for reuse across all alternative classes
+    net = Marabou.read_onnx(onnx_path)
+    inp = net.inputVars[0][0]
+    out = net.outputVars[0][0]
 
     # FIX: Handle shape mismatch between image and model input
-    expected_shape = base_inp.shape
+    expected_shape = inp.shape
     image_flat = image.flatten()
     
     print(f"Image shape: {image.shape}, flattened size: {image_flat.size}")
@@ -317,44 +321,34 @@ def targeted_rob_sens(
     # Check if we need to reshape or truncate/pad the input
     expected_size = np.prod(expected_shape)
     
-    # set adaptive bounds (either full‐image or selected pixels)
-    # Handle size mismatch for meaningful mask computation
     if image_flat.size != expected_size:
-        # If sizes don't match, we can't meaningfully compute a mask from original image
-        # So we'll use the perturb_all_pixels flag and selected_idxs as specified
-        set_pixel_bounds_adaptive(
-            net, inp, model_input, delta,
-            perturb_all=perturb_all_pixels,
-            selected_idxs=selected_idxs if perturb_all_pixels else None,
-            original_image_shape=None
-        )
+        if image_flat.size > expected_size:
+            # Truncate if image is larger
+            print(f"Truncating input from {image_flat.size} to {expected_size} elements")
+            model_input = image_flat[:expected_size]
+        else:
+            # Pad with zeros if image is smaller
+            print(f"Padding input from {image_flat.size} to {expected_size} elements")
+            model_input = np.zeros(expected_size, dtype=np.float32)
+            model_input[:image_flat.size] = image_flat
     else:
-        # Sizes match, we can use the original image shape for meaningful mask
-        set_pixel_bounds_adaptive(
-            net, inp, model_input, delta,
-            perturb_all=perturb_all_pixels,
-            selected_idxs=selected_idxs,
-            original_image_shape=image.shape
-        )
+        model_input = image_flat
     
     # Reshape to match expected input shape
     model_input = model_input.reshape(expected_shape)
 
-    orig_out = base_net.evaluateWithoutMarabou([model_input])[0]
+    orig_out = net.evaluateWithoutMarabou([model_input])[0]
     orig_pred = int(np.argmax(orig_out))
     print(f"Original pred: {orig_pred}")
 
-    num_classes = base_out.shape[0]
+    num_classes = out.shape[0]
     targets = selected_classes or [c for c in range(num_classes) if c != orig_pred]
 
     adversarial_outcomes: List[Dict[str, Any]] = []
     statuses: List[str] = []
+    all_stats = []  # Collect all stats objects
 
     for alt in targets:
-        net = copy.deepcopy(base_net)
-        inp = net.inputVars[0][0]
-        out = net.outputVars[0][0]
-
         # set adaptive bounds (either full‐image or selected pixels)
         set_pixel_bounds_adaptive(
             net, inp, model_input, delta,
@@ -364,13 +358,15 @@ def targeted_rob_sens(
         )
 
         # require logit(alt) ≥ logit(j) + ε for all j ≠ alt
+        # Mark as property so we can clear it after solving
         for j in range(num_classes):
             if j == alt:
                 continue
-            net.addInequality([out[j], out[alt]], [1.0, -1.0], -1e-6)
+            net.addInequality([out[j], out[alt]], [1.0, -1.0], -1e-6, isProperty=True)
 
         opts = Marabou.createOptions(**marabou_opts)
         exit_code, vals, stats = net.solve(options=opts)
+        all_stats.append(stats)  # Collect stats object
         lc = exit_code.lower()
         statuses.append(lc)
 
@@ -386,7 +382,12 @@ def targeted_rob_sens(
                     "original_logits": orig_out,
                     "adv_logits": adv_out
                 })
+                # Clear property constraints before breaking
+                net.clearProperty()
                 break
+        
+        # Clear property constraints before next alternative class
+        net.clearProperty()
 
     # collapse per‐alt statuses into one overall result:
     #   - SAT if any alt check was SAT
@@ -405,7 +406,7 @@ def targeted_rob_sens(
         "adversarial_results": adversarial_outcomes
     }
 
-    return report, overall
+    return report, overall, all_stats
 
 
 import numpy as np
@@ -561,7 +562,7 @@ def run_itd(
     stop_requested: Callable[[], bool] = lambda: False,
     progress_callback: Optional[Callable[[int,int,int,int,int],None]] = None,
     json_cfg: Optional[str] = None
-) -> Tuple[int, int, int]:
+) -> Tuple[int, int, int, List[Any]]:
     # load config
     with open(json_path, 'r') as f:
         cfg = json.load(f)
@@ -579,6 +580,7 @@ def run_itd(
         paths = [inp_p]
 
     sat_cnt = unsat_cnt = timeout_cnt = 0
+    all_stats = []  # Collect all stats objects
 
     total = len(paths)
     for idx, img_path in enumerate(paths, start=1):
@@ -604,7 +606,7 @@ def run_itd(
             continue  # unsupported
 
         # run local robustness
-        _, exitCode = local_rob_sens(
+        report, exitCode, img_stats = local_rob_sens(
             image=image,
             filename=os.path.basename(img_path),
             delta=delta_original,
@@ -614,6 +616,9 @@ def run_itd(
             marabou_opts=cfg.get('marabou', {}),
             stop_requested=stop_requested
         )
+        
+        # Collect all stats from this image
+        all_stats.extend(img_stats)
 
         code = exitCode
         if code == "sat":
@@ -643,7 +648,7 @@ def run_itd(
     plt.close(fig)
     print(f"__PLOT__:{out_png}")
 
-    return sat_cnt, unsat_cnt, timeout_cnt
+    return sat_cnt, unsat_cnt, timeout_cnt, all_stats
 
 # alias
 run_ITD = run_itd
