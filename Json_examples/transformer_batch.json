@@ -1,0 +1,6 @@
+{
+  "examples": [
+    {"id": "sentence-1", "text": "a good movie", "label": 1},
+    {"id": "sentence-2", "text": "a bad movie", "label": 0}
+  ]
+}

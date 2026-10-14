@@ -183,7 +183,7 @@ class PixelFeature(Feature):
 
 def get_mask_if_needed(mask_cfg: dict, image: torch.Tensor) -> Optional[np.ndarray]:
     if mask_cfg.get("compute_mask", False):
-        from ITD import compute_meaningful_mask
+        from scripts.ITD import compute_meaningful_mask
         return compute_meaningful_mask(image.numpy().squeeze(0))
     return None
 
@@ -242,12 +242,7 @@ def verify_single_image(
     # Clear property constraints before returning for network reuse
     net.clearProperty()
 
-    if exitCode == "sat":
-        return "sat", stats
-    elif exitCode == "unsat":
-        return "unsat", stats
-    else:
-        return "TIMEOUT", stats
+    return str(exitCode).lower(), stats
 
 
 def sample_perturbed_image(image: np.ndarray, delta: float) -> np.ndarray:
@@ -270,7 +265,7 @@ def plot_results(sat: int, unsat: int, timeout: int, raw_delta: float) -> plt.Fi
         x = [raw_delta]
         ax.bar(x, [s_pct], 0.5, label="SAT")
         ax.bar(x, [u_pct], 0.5, bottom=[s_pct], label="UNSAT")
-        ax.bar(x, [t_pct], 0.5, bottom=[s_pct + u_pct], label="TIMEOUT")
+        ax.bar(x, [t_pct], 0.5, bottom=[s_pct + u_pct], label="INCONCLUSIVE")
         ax.set_xlabel("Δ (raw)")
         ax.set_ylabel("% samples")
         ax.legend()
@@ -286,7 +281,8 @@ def run_tof(
     progress_callback: Optional[Callable[[int,int,int,int,int],None]] = None,
     verbosity: int = 0,
     marabou_opts: Optional[Dict[str, Any]] = None,
-    stop_requested: Optional[Callable[[], bool]] = None
+    stop_requested: Optional[Callable[[], bool]] = None,
+    result_callback: Optional[Callable] = None
 ) -> Tuple[int, int, int, List[Any]]:
     # load config
     cfg = load_config(json_cfg)
@@ -314,7 +310,7 @@ def run_tof(
     plot_flag = cfg.get("plot", False)
 
     if stop_requested and stop_requested():
-        return 0, 0, 0
+        return 0, 0, 0, []
 
     if os.path.isfile(img_dir) and img_dir.lower().endswith(".csv"):
         dataset: Dataset = SingleCSVImage(img_dir)
@@ -356,6 +352,8 @@ def run_tof(
             timeout_cnt += 1
         
         all_stats.append(stats)  # Store stats object
+        if result_callback is not None:
+            result_callback(str(fn), res, "")
 
         if progress_callback is not None:
             progress_callback(idx, total, sat_cnt, unsat_cnt, timeout_cnt)

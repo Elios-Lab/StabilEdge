@@ -24,7 +24,8 @@ def run_jena(
     plot: bool = False,
     marabou_opts: Dict[str, Any] = {},
     stop_requested: Callable[[], bool] = lambda: False,
-    progress_callback: Optional[Callable[[int,int,int,int,int],None]] = None
+    progress_callback: Optional[Callable[[int,int,int,int,int],None]] = None,
+    result_callback: Optional[Callable] = None
 ) ->  List[Tuple[Optional[float], float, int, int, int]]:
     """
     Verify time-series forecasting model robustness using Marabou.
@@ -226,6 +227,9 @@ def run_jena(
                 exitCode, vals, stats = net.solve(options=opts)
             
             all_stats.append(stats)  # Store stats object
+            exitCode = str(exitCode).lower()
+            if result_callback is not None:
+                result_callback(str(sidx), exitCode, "")
 
             # record result
             if exitCode == 'sat':
@@ -234,7 +238,7 @@ def run_jena(
             elif exitCode == 'unsat':
                 sat_flag, unsat_flag, timeout_flag = 0, 1, 0
                 unsat_count += 1
-            elif exitCode == 'TIMEOUT':
+            elif exitCode == 'timeout':
                 sat_flag, unsat_flag, timeout_flag = 0, 0, 1
                 timeout_count += 1
             else:
@@ -251,6 +255,8 @@ def run_jena(
 
         except Exception as e:
             print(f" Error on sample {sidx}: {e}")
+            if result_callback is not None:
+                result_callback(str(sidx), "error", str(e))
 
     # 7) Emit heatmap if requested
     if plot and results:

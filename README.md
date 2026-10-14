@@ -40,6 +40,7 @@ You’ll need a Conda environment called **`verify_gui`** with all required depe
 
 ```bash
 # Using the provided environment file
+cd /path/to/StabilEdge
 conda env create -f environment.yml
 conda activate verify_gui
 ```
@@ -59,6 +60,7 @@ conda activate verify_gui
 
 ```bash
 cd StabilEdge
+chmod +x run_gui.sh
 ./run_gui.sh
 ```
 
@@ -68,6 +70,16 @@ The script automatically
 * sets the necessary Qt plugin paths  
 * forces software rendering to avoid OpenGL / ROS / CUDA conflicts  
 * launches **`StabilEdge_GUI.py`**
+
+Run this in an Ubuntu desktop session. The launcher initializes Conda if
+needed and adds `scripts/` to Python's import path. It also isolates the
+application's Qt libraries and plugins from inherited ROS, OpenCV, and
+system Qt paths, which can otherwise cause an `xcb` plugin startup crash.
+Qt paths are detected from the active environment rather than hard-coded.
+
+If the `verify_gui` environment already exists, you can skip environment
+creation and launch the application directly. A Marabou warning that the
+TensorFlow parser is unavailable does not prevent use of ONNX models.
 
 ---
 
@@ -103,6 +115,17 @@ mv StabilEdge.desktop ~/.local/share/applications/
 ```
 
 ## Usage Overview
+
+The GUI supports **Marabou** and **Transformer Bounds** through the verification
+engine selector. Marabou provides the ONNX workflows described below. Transformer
+Bounds adds binary text-classifier certification, token previews, certified-radius
+search, and position scheduling with validation/fallback in an isolated Python
+process. See [Transformer engine setup and usage](docs/transformer-engine.md).
+
+```bash
+# Optional: install the CPU Transformer environment and backend source
+./setup_transformer.sh
+```
 
 1. **Import the Model**: Load an ONNX network; inspect its architecture via the embedded Netron viewer.
 2. **Load Metadata**: Supply the Feature JSON describing task type (classification/regression), number of classes, input domain, and perturbation options. Example files are provided in `examples/`.

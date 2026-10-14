@@ -14,6 +14,7 @@ import copy
 from typing import Optional, List, Tuple, Dict, Any, Callable
 
 import glob
+from verification.core import aggregate_queries
 
 # --------------------------------------------
 # Utility functions
@@ -21,6 +22,8 @@ import glob
 
 
 def normalize_difference(diff: float, tmin: float, tmax: float) -> float:
+    if not np.isfinite(diff) or diff < 0 or not np.isfinite(tmin) or not np.isfinite(tmax) or tmax <= tmin:
+        raise ValueError("Delta must be finite and nonnegative, and the input domain must have min < max.")
     return diff / (tmax - tmin)
 
 
@@ -105,6 +108,8 @@ def set_pixel_bounds_adaptive(
             else:  # 3D (H, W, C)
                 temp_image = image.reshape(original_image_shape)
             mask_2d = compute_meaningful_mask(temp_image)
+            if temp_image.ndim == 3:
+                mask_2d = np.repeat(mask_2d[..., None], temp_image.shape[2], axis=2)
             # Flatten the mask to match the current image shape
             mask = mask_2d.flatten().reshape(image.shape)
         else:
@@ -160,7 +165,9 @@ def local_rob_sens(
     verbosity: int = 0,
     marabou_opts: Dict[str, Any] = {},
     progress_callback: Optional[Callable] = None,
-    stop_requested: Callable[[], bool] = lambda: False
+    stop_requested: Callable[[], bool] = lambda: False,
+    perturb_all_pixels: bool = False,
+    selected_idxs: Optional[List[int]] = None
 ) -> Tuple[Dict, str, List[Any]]:
     # 1. Compute normalized delta (and print raw vs. normalized)
     normalized_delta = normalize_difference(delta, tmin=tmin, tmax=tmax)
@@ -179,21 +186,12 @@ def local_rob_sens(
     print(f"Image shape: {image.shape}, flattened size: {image_flat.size}")
     print(f"Model expects: {expected_shape}")
     
-    # Check if we need to reshape or truncate/pad the input
+    # Require the exact input size; changing samples changes the verified property.
     expected_size = np.prod(expected_shape)
     
     if image_flat.size != expected_size:
-        if image_flat.size > expected_size:
-            # Truncate if image is larger
-            print(f"Truncating input from {image_flat.size} to {expected_size} elements")
-            model_input = image_flat[:expected_size]
-        else:
-            # Pad with zeros if image is smaller
-            print(f"Padding input from {image_flat.size} to {expected_size} elements")
-            model_input = np.zeros(expected_size, dtype=np.float32)
-            model_input[:image_flat.size] = image_flat
-    else:
-        model_input = image_flat
+        raise ValueError("Input has %s values; the model expects %s. Supply matching input data." % (image_flat.size, expected_size))
+    model_input = image_flat
     
     # Reshape to match expected input shape
     model_input = model_input.reshape(expected_shape)
@@ -213,25 +211,12 @@ def local_rob_sens(
             print(f"→ Stop requested inside ITD at class {alt}")
             break
 
-        # Use the properly shaped input for bounds setting
-        # For meaningful mask computation, we need to handle the size mismatch
-        if image_flat.size != expected_size:
-            # If sizes don't match, we can't meaningfully compute a mask
-            # So we'll perturb all pixels in the truncated/padded input
-            set_pixel_bounds_adaptive(
-                net, inp, model_input, delta, 
-                perturb_all=True,  # Force perturb all since we can't compute meaningful mask
-                selected_idxs=None,
-                original_image_shape=None
-            )
-        else:
-            # Sizes match, we can use the original image shape for meaningful mask
-            set_pixel_bounds_adaptive(
-                net, inp, model_input, delta, 
-                perturb_all=False, 
-                selected_idxs=None,
-                original_image_shape=image.shape
-            )
+        set_pixel_bounds_adaptive(
+            net, inp, model_input, normalized_delta,
+            perturb_all=perturb_all_pixels,
+            selected_idxs=selected_idxs if selected_idxs else None,
+            original_image_shape=image.shape
+        )
 
         # enforce that the logit for class `alt` ≥ logit(j) + ε for all j≠alt
         # Mark as property so we can clear it after solving
@@ -266,17 +251,15 @@ def local_rob_sens(
     #  - if any SAT → overall SAT
     #  - else if any TIMEOUT → overall TIMEOUT
     #  - else → all were UNSAT → overall UNSAT
-    if "sat" in statuses:
-        overall = "sat"
-    elif "timeout" in statuses:
-        overall = "timeout"
-    else:
-        overall = "unsat"
+    overall = aggregate_queries(statuses, len(targets), cancelled=stop_requested())
 
     report = {
         "filename": filename,
         "original_prediction": orig_pred,
-        "adversarial_results": adversarial_outcomes
+        "adversarial_results": adversarial_outcomes,
+        "status": overall,
+        "completed_queries": len(statuses),
+        "expected_queries": len(targets)
     }
     detailed_report.append(report)
 
@@ -322,17 +305,8 @@ def targeted_rob_sens(
     expected_size = np.prod(expected_shape)
     
     if image_flat.size != expected_size:
-        if image_flat.size > expected_size:
-            # Truncate if image is larger
-            print(f"Truncating input from {image_flat.size} to {expected_size} elements")
-            model_input = image_flat[:expected_size]
-        else:
-            # Pad with zeros if image is smaller
-            print(f"Padding input from {image_flat.size} to {expected_size} elements")
-            model_input = np.zeros(expected_size, dtype=np.float32)
-            model_input[:image_flat.size] = image_flat
-    else:
-        model_input = image_flat
+        raise ValueError("Input has %s values; the model expects %s. Supply matching input data." % (image_flat.size, expected_size))
+    model_input = image_flat
     
     # Reshape to match expected input shape
     model_input = model_input.reshape(expected_shape)
@@ -349,11 +323,13 @@ def targeted_rob_sens(
     all_stats = []  # Collect all stats objects
 
     for alt in targets:
+        if stop_requested():
+            break
         # set adaptive bounds (either full‐image or selected pixels)
         set_pixel_bounds_adaptive(
-            net, inp, model_input, delta,
+            net, inp, model_input, normalized_delta,
             perturb_all=perturb_all_pixels,
-            selected_idxs=selected_idxs,
+            selected_idxs=selected_idxs if selected_idxs else None,
             original_image_shape=image.shape
         )
 
@@ -393,17 +369,15 @@ def targeted_rob_sens(
     #   - SAT if any alt check was SAT
     #   - else TIMEOUT if any alt timed out
     #   - else UNSAT (all attempted alts were UNSAT)
-    if "sat" in statuses:
-        overall = "sat"
-    elif "timeout" in statuses:
-        overall = "timeout"
-    else:
-        overall = "unsat"
+    overall = aggregate_queries(statuses, len(targets), cancelled=stop_requested())
 
     report = {
         "filename": filename,
         "original_prediction": orig_pred,
-        "adversarial_results": adversarial_outcomes
+        "adversarial_results": adversarial_outcomes,
+        "status": overall,
+        "completed_queries": len(statuses),
+        "expected_queries": len(targets)
     }
 
     return report, overall, all_stats
@@ -441,7 +415,7 @@ def plot_aggregated_itd(
     # draw bars
     ax.bar(x, sat_pct,   width, color='navy',    label='SAT')
     ax.bar(x, unsat_pct, width, bottom=sat_pct,  color='skyblue', label='UNSAT')
-    ax.bar(x, timeout_pct, width, bottom=sat_pct+unsat_pct, color='darkgrey', label='TIMEOUT')
+    ax.bar(x, timeout_pct, width, bottom=sat_pct+unsat_pct, color='darkgrey', label='INCONCLUSIVE')
 
     # labels & ticks
     ax.set_xticks(x)
@@ -542,7 +516,7 @@ def plot_grouped_confusion(
     legend_elems = [
         Patch(color="blue",      label="UNSAT"),
         Patch(color="red",       label="SAT"),
-        Patch(color="darkgrey",  label="TIMEOUT"),
+        Patch(color="darkgrey",  label="INCONCLUSIVE"),
     ]
     fig.legend(
         handles=legend_elems,
@@ -590,7 +564,9 @@ def run_itd(
         # load image/array in [0,1]
         ext = os.path.splitext(img_path)[1].lower()
         if ext in ('.png', '.jpg', '.jpeg'):
-            img = Image.open(img_path).convert('RGB')
+            img = Image.open(img_path)
+            if img.mode not in ('L', 'RGB'):
+                img = img.convert('RGB')
             image = np.array(img, dtype=np.float32) / 255.0
         elif ext == '.csv':
             df   = pd.read_csv(img_path, header=None)

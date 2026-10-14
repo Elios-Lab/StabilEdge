@@ -1,0 +1,15 @@
+name: pbverify
+channels:
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/cpu
+      - torch==2.5.1+cpu
+      - numpy==1.26.4
+      - pandas==2.2.3
+      - pytorch-pretrained-bert==0.6.2
+      - nltk==3.9.1
+      - tqdm==4.67.1
+      - cvxpy==1.6.5
